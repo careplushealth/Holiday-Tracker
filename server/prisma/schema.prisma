@@ -1,0 +1,92 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // Prisma 7 + prisma.config.ts requires explicit output
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+model Branch {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employees Employee[]
+  leaves    LeaveEntry[]
+}
+
+model Employee {
+  id        String  @id @default(uuid())
+  branchId  String
+  firstName String
+  lastName  String
+  email     String? @unique
+  role      String  @default("EMPLOYEE") // ADMIN / MANAGER / EMPLOYEE
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch   Branch                 @relation(fields: [branchId], references: [id])
+  allowedHolidayHoursPerYear Decimal @default(0) @db.Decimal(8, 2)
+  schedule EmployeeWorkSchedule[]
+  leaves   LeaveEntry[]
+}
+
+model EmployeeWorkSchedule {
+  id         String  @id @default(uuid())
+  employeeId String
+  weekday    Int // 1=Mon ... 7=Sun
+  hours      Decimal @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, weekday])
+  @@index([employeeId])
+}
+
+model LeaveEntry {
+  id         String   @id @default(uuid())
+  employeeId String
+  branchId   String
+  date       DateTime @db.Date
+  hours      Decimal  @db.Decimal(5, 2)
+  type       String   @default("ANNUAL") // ANNUAL / SICK / UNPAID / OTHER / PUBLIC_HOLIDAY_DEDUCTION
+  notes      String?
+  status     String   @default("APPROVED")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  branch   Branch   @relation(fields: [branchId], references: [id])
+
+  @@index([employeeId, date])
+  @@index([branchId, date])
+}
+
+model PublicHoliday {
+  id     String   @id @default(uuid())
+  date   DateTime @db.Date
+  name   String
+  region String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([date, region])
+  @@index([date])
+}
