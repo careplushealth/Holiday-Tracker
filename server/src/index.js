@@ -92,6 +92,46 @@ app.get("/employees", async (req, res) => {
 /* ------------------ PUBLIC HOLIDAYS ------------------ */
 
 // GET by year
+app.post("/public-holidays", async (req, res) => {
+  try {
+    const { date, name } = req.body;
+    const region = req.body.region || "DEFAULT";  // <-- Force default if null/undefined/empty
+    
+    if (!date || !name?.trim()) {
+      return res.status(400).json({ error: "date and name required" });
+    }
+
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) {
+      return res.status(400).json({ error: "Invalid date" });
+    }
+
+    const holiday = await prisma.publicHoliday.upsert({
+      where: {
+        date_region: {
+          date: d,
+          region: region,
+        },
+      },
+      update: { name: name.trim() },
+      create: { date: d, name: name.trim(), region: region },
+    });
+
+    res.json({
+      ok: true,
+      holiday: {
+        date: holiday.date.toISOString().slice(0, 10),
+        name: holiday.name,
+        region: holiday.region,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to save public holiday" });
+  }
+});
+
+// GEt (upsert)
 app.get("/public-holidays", async (req, res) => {
   const year = Number(req.query.year);
   if (!year) return res.status(400).json({ error: "year required" });
@@ -112,38 +152,6 @@ app.get("/public-holidays", async (req, res) => {
   );
 });
 
-// POST (upsert)
-app.post("/public-holidays", async (req, res) => {
-  try {
-    const { date, name } = req.body;
-    if (!date || !name?.trim()) {
-      return res.status(400).json({ error: "date and name required" });
-    }
-
-    const d = new Date(date);
-    if (Number.isNaN(d.getTime())) {
-      return res.status(400).json({ error: "Invalid date" });
-    }
-
-    const holiday = await prisma.publicHoliday.upsert({
-      where: { date },
-      update: { name: name.trim() },
-      create: { date: d, name: name.trim() },
-    });
-
-    res.json({
-      ok: true,
-      holiday: {
-        date: holiday.date.toISOString().slice(0, 10),
-        name: holiday.name,
-      },
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to save public holiday" });
-  }
-});
-
 // DELETE
 app.delete("/public-holidays", async (req, res) => {
   try {
@@ -157,6 +165,58 @@ app.delete("/public-holidays", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Failed to delete" });
   }
+});
+
+
+// ✅ Leaves for a branch in a date range (single-day rows)
+app.get("/leaves", async (req, res) => {
+  const { branchId, from, to } = req.query;
+  if (!branchId) return res.status(400).json({ error: "branchId required" });
+  if (!from || !to)
+    return res.status(400).json({ error: "from and to required (YYYY-MM-DD)" });
+
+  const leaves = await prisma.leaveEntry.findMany({
+    where: {
+      branchId: String(branchId),
+      date: { gte: new Date(String(from)), lte: new Date(String(to)) },
+    },
+    orderBy: [{ date: "asc" }],
+  });
+
+  res.json(
+    leaves.map((l) => ({
+      id: l.id,
+      employeeId: l.employeeId,
+      date: l.date.toISOString().slice(0, 10),
+      hours: Number(l.hours) || 0,
+      type: l.type,
+      comment: l.notes || "",
+    }))
+  );
+});
+
+// ✅ Bulk create leaves (one row per day)
+app.post("/leaves/bulk", async (req, res) => {
+  console.log("POST /leaves/bulk body =", req.body);
+
+  const { branchId, items } = req.body;
+  if (!branchId) return res.status(400).json({ error: "branchId required" });
+  if (!Array.isArray(items) || items.length === 0)
+    return res.status(400).json({ error: "items[] required" });
+
+  await prisma.leaveEntry.createMany({
+    data: items.map((it) => ({
+      branchId: String(branchId),
+      employeeId: it.employeeId,
+      date: new Date(it.date), // YYYY-MM-DD
+      hours: it.hours,
+      type: it.type,
+      notes: it.comment || null,
+      status: "APPROVED",
+    })),
+  });
+
+  res.json({ ok: true, created: items.length });
 });
 
 /* ------------------ START ------------------ */
