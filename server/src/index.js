@@ -156,12 +156,22 @@ app.get("/public-holidays", async (req, res) => {
 app.delete("/public-holidays", async (req, res) => {
   try {
     const { date } = req.query;
+    const region = req.query.region || "DEFAULT";
+    
     if (!date) return res.status(400).json({ error: "date required" });
 
-    await prisma.publicHoliday.delete({ where: { date: new Date(date) } });
+    await prisma.publicHoliday.delete({
+      where: {
+        date_region: {
+          date: new Date(date),
+          region: region,
+        },
+      },
+    });
+    
     res.json({ ok: true });
   } catch (err) {
-    if (err.code === "P2025") return res.json({ ok: true });
+    if (err.code === "P2025") return res.json({ ok: true }); // Not found, still ok
     console.error(err);
     res.status(500).json({ error: "Failed to delete" });
   }
