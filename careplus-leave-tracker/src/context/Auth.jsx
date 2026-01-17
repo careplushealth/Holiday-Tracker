@@ -51,13 +51,26 @@ export function AuthProvider({ children }) {
       return { ok: true };
     }
 
-    function loginBranch(branchId, username, password) {
-      const c = CREDENTIALS.branches[branchId];
-      const ok = c && username === c.username && password === c.password;
-      if (!ok) return { ok: false, message: "Invalid branch credentials." };
-      setSession({ role: "branch", branchId });
-      return { ok: true };
-    }
+function loginBranch(branchId, username, password) {
+  // 1) try direct match first (works if branchId is careplus_chemist etc.)
+  let c = CREDENTIALS.branches[branchId];
+
+  // 2) fallback: try to match by "slug" derived from the branchId/name-like string
+  if (!c && typeof branchId === "string") {
+    const normalized = branchId.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+    c =
+      CREDENTIALS.branches[normalized] ||
+      CREDENTIALS.branches[`pharmacy_${normalized}`] ||
+      CREDENTIALS.branches[`_${normalized}`];
+  }
+
+  const ok = c && username === c.username && password === c.password;
+  if (!ok) return { ok: false, message: "Invalid branch credentials." };
+
+  setSession({ role: "branch", branchId });
+  return { ok: true };
+}
 
     function logout() {
       setSession(null);
