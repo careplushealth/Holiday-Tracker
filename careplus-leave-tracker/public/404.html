@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting...</title>
+    <script>
+      // GitHub Pages SPA redirect
+      var path = window.location.pathname;
+      var repo = "/Holiday-Tracker";
+      if (path.startsWith(repo)) path = path.slice(repo.length);
+      window.location.replace(repo + "/?p=" + encodeURIComponent(path + window.location.search + window.location.hash));
+    </script>
+  </head>
+  <body></body>
+</html>
