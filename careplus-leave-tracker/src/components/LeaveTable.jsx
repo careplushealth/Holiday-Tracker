@@ -16,7 +16,7 @@ export default function LeaveTable({ leaves, employeesById, onDelete }) {
               <th>Start</th>
               <th>End</th>
               <th>Type</th>
-              <th>Days</th>
+              <th>Total Hours</th>
               <th>Comment</th>
               <th></th>
             </tr>
@@ -37,7 +37,7 @@ export default function LeaveTable({ leaves, employeesById, onDelete }) {
                   <td>
                     <span className={`pill ${pillClass(l.type)}`}>{l.type}</span>
                   </td>
-                  <td className="strong">{l.days}</td>
+                 <td className="strong">{Number(l.hours) || 0}</td>
                   <td className="muted">{l.comment || "—"}</td>
                   <td className="tdRight">
                     <button className="btn btnDanger" onClick={() => onDelete(l.id)}>

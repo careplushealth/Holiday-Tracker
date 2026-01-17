@@ -67,14 +67,14 @@ export default function EmployeesPage() {
     return map;
   }, [leaves]);
 
-  const holidayHoursTakenByEmployee = useMemo(() => {
-    const map = new Map();
-    for (const l of leaves) {
-      if (l.type !== "Holiday") continue;
-      map.set(l.employeeId, (map.get(l.employeeId) || 0) + (Number(l.hours) || 0));
-    }
-    return map;
-  }, [leaves]);
+const leaveHoursTakenByEmployee = useMemo(() => {
+  const map = new Map();
+  for (const l of leaves) {
+    map.set(l.employeeId, (map.get(l.employeeId) || 0) + (Number(l.hours) || 0));
+  }
+  return map;
+}, [leaves]);
+
 
   async function refresh() {
     if (!branchId) return;
@@ -273,17 +273,17 @@ export default function EmployeesPage() {
                 ) : (
                   employees.map((emp) => {
                     const allowed = Number(emp.allowedHolidayHoursPerYear || 0);
-                    const holidayTaken = Number(holidayHoursTakenByEmployee.get(emp.id) || 0);
-                    const allTaken = Number(hoursTakenAllTypesByEmployee.get(emp.id) || 0);
+                    const allTaken = Number(leaveHoursTakenByEmployee.get(emp.id) || 0);
 
-                    const phYear = calcPublicHolidayHoursForYear(year, emp.weeklyHours, publicHolidays);
-                    const remaining = Math.max(0, allowed - holidayTaken - phYear);
+const phYear = calcPublicHolidayHoursForYear(year, emp.weeklyHours, publicHolidays);
+const remaining = Math.max(0, allowed - allTaken - phYear);
 
                     return (
                       <tr key={emp.id}>
                         <td className="strong">{emp.name}</td>
                         <td>{round2(allowed)}</td>
-                        <td>{round2(holidayTaken)}</td>
+                       <td>{round2(allTaken)}</td>
+
                         <td>{round2(phYear)}</td>
                         <td>{round2(remaining)}</td>
                         <td>{round2(allTaken)}</td>

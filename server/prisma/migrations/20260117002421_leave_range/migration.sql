@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "LeaveEntry" ALTER COLUMN "hours" SET DATA TYPE DECIMAL(7,2);

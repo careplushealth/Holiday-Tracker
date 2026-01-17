@@ -119,54 +119,54 @@ export default function LeaveEntryPage() {
     setLeaves(Array.isArray(data) ? data : []);
   }
 
-  async function submit(e) {
-    e.preventDefault();
-    if (!branchId) {
-      setMsg("Select a branch first.");
-      return;
-    }
-    if (!employeeId || !startDate || !endDate || hours <= 0) return;
-
-    setLoading(true);
-    setMsg("");
-
-    try {
-      // NOTE: backend currently stores one row per day via /leaves/bulk.
-      // For now we submit a single row on startDate with computed hours.
-      // If you want real multi-day expansion, we can add it next.
-      const payload = {
-        branchId,
-        items: [
-          {
-            employeeId,
-            date: startDate,
-            hours,
-            type,
-            comment: comment.trim(),
-          },
-        ],
-      };
-
-      const res = await fetch(`${API}/leaves/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-
-      setStartDate("");
-      setEndDate("");
-      setComment("");
-      setMsg("Leave saved.");
-      await refreshLeaves();
-    } catch (err) {
-      console.error(err);
-      setMsg("Error saving leave. Check server logs.");
-    } finally {
-      setLoading(false);
-    }
+async function submit(e) {
+  e.preventDefault();
+  if (!branchId) {
+    setMsg("Select a branch first.");
+    return;
   }
+  if (!employeeId || !startDate || !endDate || hours <= 0) return;
+  if (startDate > endDate) {
+  setMsg("End date must be after start date.");
+  return;
+}
+
+  setLoading(true);
+  setMsg("");
+
+  try {
+    // ✅ NEW: store ONE record with start/end range
+    const payload = {
+      branchId,
+      employeeId,
+      startDate,
+      endDate,
+      hours,
+      type,
+      comment: comment.trim(),
+    };
+
+    const res = await fetch(`${API}/leaves`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) throw new Error(await res.text());
+
+    setStartDate("");
+    setEndDate("");
+    setComment("");
+    setMsg("Leave saved.");
+    await refreshLeaves();
+  } catch (err) {
+    console.error(err);
+    setMsg("Error saving leave. Check server logs.");
+  } finally {
+    setLoading(false);
+  }
+}
+
 
   async function onDeleteLeave(_leaveId) {
     // Server has no DELETE endpoint for leaves yet.
@@ -327,12 +327,12 @@ export default function LeaveEntryPage() {
           </div>
 
           <LeaveTable
-            leaves={leaves}
-            employeesById={employeesById}
-            onDelete={onDeleteLeave}
-            unitLabel="hours"
-            valueKey="hours"
-          />
+  leaves={leaves}
+  employeesById={employeesById}
+  onDelete={onDeleteLeave}
+  unitLabel="Total hours"
+  valueKey="hours"
+/>
         </>
       )}
     </div>

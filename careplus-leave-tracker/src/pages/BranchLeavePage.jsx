@@ -1,25 +1,36 @@
 import React, { useMemo, useEffect, useState } from "react";
-import { useStore } from "../context/Store.jsx";
 import { useAuth } from "../context/Auth.jsx";
-import { eachDayInclusive, getYearFromISO } from "../utils/dates.js";
+import { getYearFromISO } from "../utils/dates.js";
 import { calculateHours } from "../utils/dates.js";
 import { calcPublicHolidayHoursForYear } from "../utils/holidayHours.js";
 
-const TYPES = ["Holiday", "Sick Leave", "Other"];
-
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
+// Backend types
+const TYPE_OPTIONS = [
+  { label: "Holiday", value: "ANNUAL" },
+  { label: "Sick Leave", value: "SICK" },
+  { label: "Unpaid", value: "UNPAID" },
+  { label: "Other", value: "OTHER" },
+];
+
+// Map old Store branch ids → DB branch names
+const LEGACY_BRANCH_ID_TO_NAME = {
+  careplus_chemist: "Careplus Chemist",
+  wilmslow_road: "Wilmslow Road Pharmacy",
+  pharmacy_247: "247 Pharmacy",
+};
+
+function looksLikeUuid(s) {
+  return typeof s === "string" && s.includes("-") && s.length >= 32;
+}
+
 export default function BranchLeavePage() {
-  const { state } = useStore(); // still used for branch name lookup
   const { session } = useAuth();
-
-  const branchId = session?.branchId;
-
-  const branchName =
-    state.branches.find((b) => b.id === branchId)?.name || "Branch";
 
   const currentYear = new Date().getFullYear();
 
+  const [branches, setBranches] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [leaves, setLeaves] = useState([]);
   const [publicHolidays, setPublicHolidays] = useState([]);
@@ -27,10 +38,44 @@ export default function BranchLeavePage() {
   const [employeeId, setEmployeeId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [type, setType] = useState("Holiday");
+  const [type, setType] = useState("ANNUAL");
   const [comment, setComment] = useState("");
   const [savedMsg, setSavedMsg] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Load branches from DB (resolve UUID)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API}/branches`);
+        const data = await res.json();
+        setBranches(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setBranches([]);
+      }
+    })();
+  }, []);
+
+  // Resolve branchId to a DB UUID
+  const effectiveBranch = useMemo(() => {
+    const raw = session?.branchId || "";
+    if (!raw) return null;
+
+    if (looksLikeUuid(raw)) {
+      return branches.find((b) => b.id === raw) || { id: raw, name: "Branch" };
+    }
+
+    const expectedName = LEGACY_BRANCH_ID_TO_NAME[raw];
+    if (!expectedName) return null;
+
+    return (
+      branches.find((b) => String(b.name).toLowerCase() === expectedName.toLowerCase()) || null
+    );
+  }, [session?.branchId, branches]);
+
+  const branchId = effectiveBranch?.id || "";
+  const branchName = effectiveBranch?.name || "Branch";
 
   // Use year from date inputs if set, otherwise current year
   const year = useMemo(() => {
@@ -39,158 +84,163 @@ export default function BranchLeavePage() {
 
   // Load employees for this branch
   useEffect(() => {
-    if (!branchId) return;
+    if (!branchId) {
+      setEmployees([]);
+      return;
+    }
     (async () => {
-      const res = await fetch(`${API}/employees?branchId=${branchId}`);
-      const data = await res.json();
-      setEmployees(Array.isArray(data) ? data : []);
+      try {
+        const res = await fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`);
+        const data = await res.json();
+        setEmployees(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setEmployees([]);
+      }
     })();
   }, [branchId]);
 
-  // Ensure selected employeeId stays valid
+  // Keep selected employeeId valid
   useEffect(() => {
     if (!employees.length) {
       setEmployeeId("");
       return;
     }
-    if (!employeeId) setEmployeeId(employees[0].id);
-    else if (!employees.some((e) => e.id === employeeId)) setEmployeeId(employees[0].id);
-  }, [employees, employeeId]);
+    setEmployeeId((prev) => (prev && employees.some((e) => e.id === prev) ? prev : employees[0].id));
+  }, [employees]);
 
   // Load public holidays for selected year
   useEffect(() => {
     (async () => {
-      const res = await fetch(`${API}/public-holidays?year=${year}`);
-      const data = await res.json();
-      setPublicHolidays(Array.isArray(data) ? data : []);
+      try {
+        const res = await fetch(`${API}/public-holidays?year=${year}`);
+        const data = await res.json();
+        setPublicHolidays(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setPublicHolidays([]);
+      }
     })();
   }, [year]);
 
-  const publicHolidaySet = useMemo(() => {
-    return new Set((publicHolidays || []).map((h) => h.date));
-  }, [publicHolidays]);
+  const publicHolidaySet = useMemo(
+    () => new Set((publicHolidays || []).map((h) => h.date)),
+    [publicHolidays]
+  );
 
-  // Load leaves for the branch for whole selected year (simple)
+  // Load leaves for this branch for selected year (range-based)
   useEffect(() => {
-    if (!branchId) return;
+    if (!branchId) {
+      setLeaves([]);
+      return;
+    }
+
     const from = `${year}-01-01`;
     const to = `${year}-12-31`;
+
     (async () => {
-      const res = await fetch(`${API}/leaves?branchId=${branchId}&from=${from}&to=${to}`);
-      const data = await res.json();
-      setLeaves(Array.isArray(data) ? data : []);
+      try {
+        const res = await fetch(
+          `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`
+        );
+        const data = await res.json();
+        setLeaves(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setLeaves([]);
+      }
     })();
   }, [branchId, year]);
 
   const employee = useMemo(
-    () => employees.find((e) => e.id === employeeId),
+    () => employees.find((e) => e.id === employeeId) || null,
     [employees, employeeId]
   );
 
-  // Auto-calc leave HOURS for the selected employee using their weekly schedule
+  // Auto-calc total hours for range (UI display only)
   const hours = useMemo(() => {
     if (!startDate || !endDate || !employee) return 0;
     return calculateHours(startDate, endDate, employee.weeklyHours, publicHolidaySet);
   }, [startDate, endDate, employee, publicHolidaySet]);
 
-  // Leaves for selected employee (from API, single-day rows)
-  const employeeLeaves = useMemo(() => {
-    return leaves.filter((l) => l.employeeId === employeeId);
-  }, [leaves, employeeId]);
+  const employeeLeaves = useMemo(
+    () => leaves.filter((l) => l.employeeId === employeeId),
+    [leaves, employeeId]
+  );
 
-  // Stats
   const stats = useMemo(() => {
     if (!employee) return null;
 
     let totalTaken = 0;
-    let holidayTaken = 0;
+    let annualTaken = 0;
     let sickTaken = 0;
     let otherTaken = 0;
 
     for (const l of employeeLeaves) {
       const h = Number(l.hours) || 0;
       totalTaken += h;
-
-      if (l.type === "Holiday") holidayTaken += h;
-      else if (l.type === "Sick Leave") sickTaken += h;
+      if (l.type === "ANNUAL") annualTaken += h;
+      else if (l.type === "SICK") sickTaken += h;
       else otherTaken += h;
     }
 
     const allowedHoliday = Number(employee.allowedHolidayHoursPerYear || 0);
-
-    // Whole-year public holiday hours based on employee schedule
     const phYear = calcPublicHolidayHoursForYear(year, employee.weeklyHours, publicHolidays);
+    const remainingHoliday = Math.max(0, allowedHoliday - annualTaken - phYear);
 
-    const remainingHoliday = Math.max(0, allowedHoliday - holidayTaken - phYear);
-
-    return {
-      allowedHoliday,
-      totalTaken,
-      holidayTaken,
-      sickTaken,
-      otherTaken,
-      phYear,
-      remainingHoliday,
-    };
+    return { allowedHoliday, totalTaken, annualTaken, sickTaken, otherTaken, phYear, remainingHoliday };
   }, [employee, employeeLeaves, year, publicHolidays]);
+
+  async function refreshLeaves() {
+    if (!branchId) return;
+    const from = `${year}-01-01`;
+    const to = `${year}-12-31`;
+    const res = await fetch(
+      `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`
+    );
+    const data = await res.json();
+    setLeaves(Array.isArray(data) ? data : []);
+  }
 
   async function submit(e) {
     e.preventDefault();
     setSavedMsg("");
 
-    if (!branchId || !employeeId || !startDate || !endDate || !employee) return;
+    if (!branchId) {
+      setSavedMsg("Branch is not linked to a valid DB branch. Contact admin.");
+      return;
+    }
+    if (!employeeId || !startDate || !endDate || !employee) return;
+    if (startDate > endDate) {
+  setSavedMsg("End date must be after start date.");
+  return;
+}
+
+
     if (hours <= 0) return;
 
     setLoading(true);
     try {
-      // Expand range into per-day rows, skipping non-working/public-holiday days
-      const days = eachDayInclusive(startDate, endDate);
+      // ✅ Store ONE record with start/end range
+      const payload = {
+        branchId,
+        employeeId,
+        startDate,
+        endDate,
+        hours, // total hours (calculated)
+        type,
+        comment: comment.trim(),
+      };
 
-      const items = [];
-      for (const iso of days) {
-        if (publicHolidaySet.has(iso)) continue;
-
-        const day = new Date(iso + "T00:00:00");
-        const jsDay = day.getDay(); // 0 Sun ... 6 Sat
-        const key =
-          jsDay === 1 ? "mon" :
-          jsDay === 2 ? "tue" :
-          jsDay === 3 ? "wed" :
-          jsDay === 4 ? "thu" :
-          jsDay === 5 ? "fri" :
-          jsDay === 6 ? "sat" : "sun";
-
-        const h = Number(employee.weeklyHours?.[key] ?? 0);
-        if (h <= 0) continue;
-
-        items.push({
-          employeeId,
-          date: iso,
-          hours: h,
-          type,
-          comment: comment.trim(),
-        });
-      }
-
-      if (!items.length) {
-        setSavedMsg("No working days selected (or all days were public holidays).");
-        return;
-      }
-
-      const res = await fetch(`${API}/leaves/bulk`, {
+      const res = await fetch(`${API}/leaves`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branchId, items }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) throw new Error(await res.text());
 
-      // Refresh leaves
-      const from = `${year}-01-01`;
-      const to = `${year}-12-31`;
-      const r2 = await fetch(`${API}/leaves?branchId=${branchId}&from=${from}&to=${to}`);
-      const data = await r2.json();
-      setLeaves(Array.isArray(data) ? data : []);
+      await refreshLeaves();
 
       setStartDate("");
       setEndDate("");
@@ -204,12 +254,25 @@ export default function BranchLeavePage() {
     }
   }
 
+  const missingBranchLink = !!session?.branchId && !branchId;
+
   return (
     <div className="page">
       <div className="pageHeader">
         <h1 className="h1">Leave Entry</h1>
         <p className="muted">{branchName} • Branch access: add leave only.</p>
+        <p className="mutedSm">
+          Debug: session.branchId = <b>{String(session?.branchId || "")}</b> • resolved branchId ={" "}
+          <b>{String(branchId || "")}</b>
+        </p>
       </div>
+
+      {missingBranchLink && (
+        <div className="notice">
+          Your branch user is linked to <b>{String(session?.branchId)}</b> but that does not match any DB branch.
+          Fix by updating the branch user to store the DB branch UUID, or ensure DB branch names match the mapping.
+        </div>
+      )}
 
       <div className="grid2">
         {/* LEFT: Form */}
@@ -219,19 +282,15 @@ export default function BranchLeavePage() {
             <div className="muted">Hours auto-calculated</div>
           </div>
 
-          {employees.length === 0 ? (
-            <div className="notice">
-              No employees set for this branch. Please contact admin to add employees.
-            </div>
+          {!branchId ? (
+            <div className="notice">No valid branch selected / resolved.</div>
+          ) : employees.length === 0 ? (
+            <div className="notice">No employees set for this branch. Please contact admin to add employees.</div>
           ) : (
             <form className="form" onSubmit={submit}>
               <div className="formRow">
                 <label className="label">Employee</label>
-                <select
-                  className="select"
-                  value={employeeId}
-                  onChange={(e) => setEmployeeId(e.target.value)}
-                >
+                <select className="select" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
                   {employees.map((emp) => (
                     <option key={emp.id} value={emp.id}>
                       {emp.name}
@@ -243,7 +302,9 @@ export default function BranchLeavePage() {
                   Working pattern:{" "}
                   <b>
                     {employee
-                      ? `Mon ${employee.weeklyHours?.mon ?? 0}h, Tue ${employee.weeklyHours?.tue ?? 0}h, Wed ${employee.weeklyHours?.wed ?? 0}h, Thu ${employee.weeklyHours?.thu ?? 0}h, Fri ${employee.weeklyHours?.fri ?? 0}h`
+                      ? `Mon ${employee.weeklyHours?.mon ?? 0}h, Tue ${employee.weeklyHours?.tue ?? 0}h, Wed ${
+                          employee.weeklyHours?.wed ?? 0
+                        }h, Thu ${employee.weeklyHours?.thu ?? 0}h, Fri ${employee.weeklyHours?.fri ?? 0}h`
                       : "—"}
                   </b>
                 </div>
@@ -252,21 +313,11 @@ export default function BranchLeavePage() {
               <div className="formRow2">
                 <div>
                   <label className="label">Start Date</label>
-                  <input
-                    className="input"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
+                  <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                 </div>
                 <div>
                   <label className="label">End Date</label>
-                  <input
-                    className="input"
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
+                  <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                 </div>
               </div>
 
@@ -274,9 +325,9 @@ export default function BranchLeavePage() {
                 <div>
                   <label className="label">Type of Leave</label>
                   <select className="select" value={type} onChange={(e) => setType(e.target.value)}>
-                    {TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
+                    {TYPE_OPTIONS.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
                       </option>
                     ))}
                   </select>
@@ -294,18 +345,14 @@ export default function BranchLeavePage() {
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   rows={3}
-                  placeholder="e.g. Dentist appointment, flu, family emergency..."
+                  placeholder="e.g. Dentist appointment..."
                 />
               </div>
 
               {savedMsg && <div className="successBox">{savedMsg}</div>}
 
               <div className="formActions">
-                <button
-                  className="btn"
-                  type="submit"
-                  disabled={loading || !employeeId || !startDate || !endDate || hours <= 0}
-                >
+                <button className="btn" type="submit" disabled={loading || !employeeId || !startDate || !endDate || hours <= 0}>
                   {loading ? "Saving..." : "Save Leave"}
                 </button>
               </div>
@@ -328,7 +375,7 @@ export default function BranchLeavePage() {
               <div className="statsGrid">
                 <Stat label="Holiday Allowed / Year (hrs)" value={round2(stats.allowedHoliday)} />
                 <Stat label="Total Taken (hrs)" value={round2(stats.totalTaken)} />
-                <Stat label="Holiday Taken (hrs)" value={round2(stats.holidayTaken)} />
+                <Stat label="Holiday Taken (hrs)" value={round2(stats.annualTaken)} />
                 <Stat label="Sick Taken (hrs)" value={round2(stats.sickTaken)} />
                 <Stat label="Other Taken (hrs)" value={round2(stats.otherTaken)} />
                 <Stat label="Public Holidays (Year) (hrs)" value={round2(stats.phYear)} />
@@ -358,4 +405,3 @@ function Stat({ label, value }) {
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
-console.log(import.meta.env.VITE_API_URL);

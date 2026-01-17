@@ -59,24 +59,29 @@ model EmployeeWorkSchedule {
 }
 
 model LeaveEntry {
-  id         String   @id @default(uuid())
-  employeeId String
+  id         String   @id @default(cuid())
   branchId   String
-  date       DateTime @db.Date
-  hours      Decimal  @db.Decimal(5, 2)
-  type       String   @default("ANNUAL") // ANNUAL / SICK / UNPAID / OTHER / PUBLIC_HOLIDAY_DEDUCTION
-  notes      String?
-  status     String   @default("APPROVED")
+  employeeId String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  startDate  DateTime
+  endDate    DateTime
 
-  employee Employee @relation(fields: [employeeId], references: [id])
-  branch   Branch   @relation(fields: [branchId], references: [id])
+  hours      Float
+  type       String
+  comment    String?
 
-  @@index([employeeId, date])
-  @@index([branchId, date])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  branch     Branch   @relation(fields: [branchId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([branchId])
+  @@index([employeeId])
+  @@index([startDate])
+  @@index([endDate])
 }
+
 
 model PublicHoliday {
   id     String   @id @default(uuid())

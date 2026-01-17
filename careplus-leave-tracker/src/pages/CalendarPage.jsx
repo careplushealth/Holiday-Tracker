@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useStore } from "../context/Store.jsx";
 import YearCalendar from "../components/YearCalendar.jsx";
 import { calcPublicHolidayHoursForYear } from "../utils/holidayHours.js";
+import { eachDayInclusive } from "../utils/dates.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -90,19 +91,35 @@ export default function CalendarPage() {
   }, [leaves, employeeId]);
 
   // ISO day -> { type, comment, hours }
-  const leaveDaysMap = useMemo(() => {
-    const map = new Map();
-    for (const l of employeeLeaves) {
-      if (!l?.date) continue;
-      // l.date already ISO "YYYY-MM-DD" from backend response
-      map.set(l.date, {
+// ISO day -> { type, comment, hours }
+// Backend now returns range leaves: startDate/endDate (YYYY-MM-DD)
+// We expand ranges into per-day markings so the calendar can colour each date.
+const leaveDaysMap = useMemo(() => {
+  const map = new Map();
+
+  for (const l of employeeLeaves) {
+    const start = l?.startDate || l?.date;
+    const end = l?.endDate || l?.date;
+    if (!start || !end) continue;
+
+    const days = eachDayInclusive(start, end);
+
+    // Distribute total hours across the days (calendar just needs *some* hours for tooltip)
+    const totalHours = Number(l.hours) || 0;
+    const perDayHours = days.length ? totalHours / days.length : totalHours;
+
+    for (const iso of days) {
+      map.set(iso, {
         type: l.type,
         comment: l.comment || "",
-        hours: Number(l.hours) || 0,
+        hours: perDayHours,
       });
     }
-    return map;
-  }, [employeeLeaves]);
+  }
+
+  return map;
+}, [employeeLeaves]);
+
 
   const stats = useMemo(() => {
     if (!employee) return null;
@@ -127,7 +144,8 @@ export default function CalendarPage() {
     const phYear = calcPublicHolidayHoursForYear(year, employee.weeklyHours, publicHolidays);
 
     // Remaining holiday = allowed - annual taken - public holidays deduction
-    const remainingHoliday = Math.max(0, allowedHoliday - holidayTaken - phYear);
+   const remainingHoliday = Math.max(0, allowedHoliday - totalTaken - phYear);
+
 
     return {
       allowedHoliday,

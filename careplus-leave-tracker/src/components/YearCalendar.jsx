@@ -46,7 +46,8 @@ export default function YearCalendar({ year, leaveDaysMap, publicHolidaySet, wee
 
               if (isPH) titleParts.push("Public Holiday");
               if (leave) {
-                titleParts.push(`${leave.type}: ${round2(leave.hours)}h${leave.comment ? ` — ${leave.comment}` : ""}`);
+                titleParts.push(`${prettyType(leave.type)}: ${round2(leave.hours)}h${leave.comment ? ` — ${leave.comment}` : ""}`);
+
               }
 
               return (
@@ -69,10 +70,19 @@ export default function YearCalendar({ year, leaveDaysMap, publicHolidaySet, wee
 }
 
 function leaveClass(type) {
-  if (type === "Holiday") return "dayLeaveHoliday";
-  if (type === "Sick Leave") return "dayLeaveSick";
+  if (type === "ANNUAL") return "dayLeaveHoliday";
+  if (type === "SICK") return "dayLeaveSick";
+  // UNPAID and OTHER both use "Other" colour
+  if (type === "UNPAID" || type === "OTHER") return "dayLeaveOther";
   return "dayLeaveOther";
 }
+function prettyType(type) {
+  if (type === "ANNUAL") return "Holiday";
+  if (type === "SICK") return "Sick";
+  if (type === "UNPAID") return "Unpaid";
+  return "Other";
+}
+
 
 function buildMonth(year, monthIndex) {
   const first = new Date(year, monthIndex, 1);
