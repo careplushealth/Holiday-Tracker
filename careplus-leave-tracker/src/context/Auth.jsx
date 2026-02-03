@@ -10,9 +10,9 @@ const AUTH_KEY = "careplus_auth_v1";
 const CREDENTIALS = {
   admin: { username: "admin", password: "Mehraan@123" },
   branches: {
-    careplus_chemist: { username: "careplus", password: "Careplus@123" },
-    wilmslow_road: { username: "wilmslow", password: "Wilmslow@123" },
-    pharmacy_247: { username: "pharmacy247", password: "Pharmacy247@123" },
+    '4ef247f9-010e-41a9-bf54-4994b2c7b171': { username: "careplus", password: "Careplus@123" },
+    'cc09b3a5-c2fc-46c2-b3d1-3d1df7ee6ab0': { username: "wilmslow", password: "Wilmslow@123" },
+    '17251c63-d7ca-4cbb-8630-ffb8a1b13b42': { username: "pharmacy247", password: "Pharmacy247@123" },
   },
 };
 
@@ -66,6 +66,7 @@ function loginBranch(branchId, username, password) {
   }
 
   const ok = c && username === c.username && password === c.password;
+  console.log({ok,password,c, branchId})
   if (!ok) return { ok: false, message: "Invalid branch credentials." };
 
   setSession({ role: "branch", branchId });

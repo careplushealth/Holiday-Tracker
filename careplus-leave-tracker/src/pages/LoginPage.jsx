@@ -23,7 +23,6 @@ export default function LoginPage() {
   function submit(e) {
     e.preventDefault();
     setErr("");
-
     if (mode === "admin") {
       const res = loginAdmin(username.trim(), password);
       if (!res.ok) return setErr(res.message);
@@ -34,6 +33,8 @@ export default function LoginPage() {
       nav("/branch", { replace: true });
     }
   }
+
+
 
   return (
     <div className="loginShell">
