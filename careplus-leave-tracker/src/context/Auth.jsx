@@ -1,20 +1,8 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { API_URL } from "../utils/api.js";
 
 const AuthContext = createContext(null);
 const AUTH_KEY = "careplus_auth_v1";
-
-/**
- * Client-side credentials (simple).
- * Replace these with your real ones.
- */
-const CREDENTIALS = {
-  admin: { username: "admin", password: "Mehraan@123" },
-  branches: {
-    '4ef247f9-010e-41a9-bf54-4994b2c7b171': { username: "careplus", password: "Careplus@123" },
-    'cc09b3a5-c2fc-46c2-b3d1-3d1df7ee6ab0': { username: "wilmslow", password: "Wilmslow@123" },
-    '17251c63-d7ca-4cbb-8630-ffb8a1b13b42': { username: "pharmacy247", password: "Pharmacy247@123" },
-  },
-};
 
 function loadSession() {
   try {
@@ -34,6 +22,31 @@ function saveSession(session) {
   }
 }
 
+async function apiLogin(username, password) {
+  if (!API_URL) {
+    return { ok: false, message: "VITE_API_URL is not set." };
+  }
+
+  try {
+    const res = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data?.ok) {
+      return { ok: false, message: data?.message || "Invalid credentials." };
+    }
+
+    return { ok: true, data };
+  } catch (e) {
+    console.error("apiLogin error:", e);
+    return { ok: false, message: e?.message || "Login failed." };
+  }
+}
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(() => loadSession());
 
@@ -42,36 +55,57 @@ export function AuthProvider({ children }) {
   }, [session]);
 
   const api = useMemo(() => {
-    function loginAdmin(username, password) {
-      const ok =
-        username === CREDENTIALS.admin.username &&
-        password === CREDENTIALS.admin.password;
-      if (!ok) return { ok: false, message: "Invalid admin credentials." };
-      setSession({ role: "admin" });
+    async function loginAdmin(username, password) {
+      const u = username.trim();
+      const p = password;
+
+      const result = await apiLogin(u, p);
+      if (!result.ok) return result;
+
+      const { role, token, branchId, username: returnedUsername } = result.data;
+
+      if (role !== "admin") {
+        return { ok: false, message: "This account is not an admin account." };
+      }
+
+      setSession({
+        role: "admin",
+        token,
+        username: returnedUsername || u,
+        branchId: branchId ?? null,
+      });
+
       return { ok: true };
     }
 
-function loginBranch(branchId, username, password) {
-  // 1) try direct match first (works if branchId is careplus_chemist etc.)
-  let c = CREDENTIALS.branches[branchId];
+    async function loginBranch(selectedBranchId, username, password) {
+      const u = username.trim();
+      const p = password;
 
-  // 2) fallback: try to match by "slug" derived from the branchId/name-like string
-  if (!c && typeof branchId === "string") {
-    const normalized = branchId.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      const result = await apiLogin(u, p);
+      if (!result.ok) return result;
 
-    c =
-      CREDENTIALS.branches[normalized] ||
-      CREDENTIALS.branches[`pharmacy_${normalized}`] ||
-      CREDENTIALS.branches[`_${normalized}`];
-  }
+      const { role, token, branchId, username: returnedUsername } = result.data;
 
-  const ok = c && username === c.username && password === c.password;
-  console.log({ok,password,c, branchId})
-  if (!ok) return { ok: false, message: "Invalid branch credentials." };
+      if (role !== "branch") {
+        return { ok: false, message: "This account is not a branch account." };
+      }
 
-  setSession({ role: "branch", branchId });
-  return { ok: true };
-}
+      // Critical security check:
+      // Branch user must match the branch selected in the dropdown.
+      if (!branchId || String(branchId) !== String(selectedBranchId)) {
+        return { ok: false, message: "This user does not belong to the selected branch." };
+      }
+
+      setSession({
+        role: "branch",
+        token,
+        username: returnedUsername || u,
+        branchId: String(branchId),
+      });
+
+      return { ok: true };
+    }
 
     function logout() {
       setSession(null);

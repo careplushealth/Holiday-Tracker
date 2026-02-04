@@ -36,17 +36,17 @@ export default function LoginPage() {
     return branches.find((b) => b.id === branchId)?.name || "";
   }, [branches, branchId]);
 
-  function submit(e) {
+ async function submit(e) {
     e.preventDefault();
     setErr("");
 
     if (mode === "admin") {
-      const res = loginAdmin(username.trim(), password);
+      const res = await loginAdmin(username.trim(), password);
       if (!res.ok) return setErr(res.message);
       nav("/", { replace: true });
     } else {
       if (!branchId) return setErr("Please select a branch.");
-      const res = loginBranch(branchId, username.trim(), password);
+      const res = await loginBranch(branchId, username.trim(), password);
       if (!res.ok) return setErr(res.message);
       nav("/branch", { replace: true });
     }
