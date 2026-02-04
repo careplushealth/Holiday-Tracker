@@ -25,6 +25,23 @@ function looksLikeUuid(s) {
   return typeof s === "string" && s.includes("-") && s.length >= 32;
 }
 
+// Reads JWT from the same localStorage key used by Auth.jsx
+function authHeaders(extra = {}) {
+  let token = "";
+  try {
+    const raw = localStorage.getItem("careplus_auth_v1");
+    const session = raw ? JSON.parse(raw) : null;
+    token = session?.token || "";
+  } catch {
+    token = "";
+  }
+
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 export default function BranchLeavePage() {
   const { session } = useAuth();
 
@@ -47,8 +64,10 @@ export default function BranchLeavePage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API}/branches`);
-        const data = await res.json();
+        const res = await fetch(`${API}/branches`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
         setBranches(Array.isArray(data) ? data : []);
       } catch (e) {
         console.error(e);
@@ -62,15 +81,18 @@ export default function BranchLeavePage() {
     const raw = session?.branchId || "";
     if (!raw) return null;
 
+    // In the new auth system, branch users should always have UUID here
     if (looksLikeUuid(raw)) {
       return branches.find((b) => b.id === raw) || { id: raw, name: "Branch" };
     }
 
+    // Legacy fallback (in case any old sessions exist)
     const expectedName = LEGACY_BRANCH_ID_TO_NAME[raw];
     if (!expectedName) return null;
 
     return (
-      branches.find((b) => String(b.name).toLowerCase() === expectedName.toLowerCase()) || null
+      branches.find((b) => String(b.name).toLowerCase() === expectedName.toLowerCase()) ||
+      null
     );
   }, [session?.branchId, branches]);
 
@@ -90,8 +112,10 @@ export default function BranchLeavePage() {
     }
     (async () => {
       try {
-        const res = await fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`);
-        const data = await res.json();
+        const res = await fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
         setEmployees(Array.isArray(data) ? data : []);
       } catch (e) {
         console.error(e);
@@ -106,15 +130,19 @@ export default function BranchLeavePage() {
       setEmployeeId("");
       return;
     }
-    setEmployeeId((prev) => (prev && employees.some((e) => e.id === prev) ? prev : employees[0].id));
+    setEmployeeId((prev) =>
+      prev && employees.some((e) => e.id === prev) ? prev : employees[0].id
+    );
   }, [employees]);
 
   // Load public holidays for selected year
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API}/public-holidays?year=${year}`);
-        const data = await res.json();
+        const res = await fetch(`${API}/public-holidays?year=${year}`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
         setPublicHolidays(Array.isArray(data) ? data : []);
       } catch (e) {
         console.error(e);
@@ -141,9 +169,10 @@ export default function BranchLeavePage() {
     (async () => {
       try {
         const res = await fetch(
-          `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`
+          `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`,
+          { headers: authHeaders() }
         );
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
         setLeaves(Array.isArray(data) ? data : []);
       } catch (e) {
         console.error(e);
@@ -188,17 +217,27 @@ export default function BranchLeavePage() {
     const phYear = calcPublicHolidayHoursForYear(year, employee.weeklyHours, publicHolidays);
     const remainingHoliday = Math.max(0, allowedHoliday - annualTaken - phYear);
 
-    return { allowedHoliday, totalTaken, annualTaken, sickTaken, otherTaken, phYear, remainingHoliday };
+    return {
+      allowedHoliday,
+      totalTaken,
+      annualTaken,
+      sickTaken,
+      otherTaken,
+      phYear,
+      remainingHoliday,
+    };
   }, [employee, employeeLeaves, year, publicHolidays]);
 
   async function refreshLeaves() {
     if (!branchId) return;
     const from = `${year}-01-01`;
     const to = `${year}-12-31`;
+
     const res = await fetch(
-      `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`
+      `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`,
+      { headers: authHeaders() }
     );
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
     setLeaves(Array.isArray(data) ? data : []);
   }
 
@@ -211,11 +250,11 @@ export default function BranchLeavePage() {
       return;
     }
     if (!employeeId || !startDate || !endDate || !employee) return;
-    if (startDate > endDate) {
-  setSavedMsg("End date must be after start date.");
-  return;
-}
 
+    if (startDate > endDate) {
+      setSavedMsg("End date must be after start date.");
+      return;
+    }
 
     if (hours <= 0) return;
 
@@ -234,7 +273,7 @@ export default function BranchLeavePage() {
 
       const res = await fetch(`${API}/leaves`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
@@ -261,13 +300,12 @@ export default function BranchLeavePage() {
       <div className="pageHeader">
         <h1 className="h1">Leave Entry</h1>
         <p className="muted">{branchName} • Branch access: add leave only.</p>
-       
       </div>
 
       {missingBranchLink && (
         <div className="notice">
-          Your branch user is linked to <b>{String(session?.branchId)}</b> but that does not match any DB branch.
-          Fix by updating the branch user to store the DB branch UUID, or ensure DB branch names match the mapping.
+          Your branch user is linked to <b>{String(session?.branchId)}</b> but that does not match any DB branch. Fix by
+          updating the branch user to store the DB branch UUID, or ensure DB branch names match the mapping.
         </div>
       )}
 
@@ -282,7 +320,9 @@ export default function BranchLeavePage() {
           {!branchId ? (
             <div className="notice">No valid branch selected / resolved.</div>
           ) : employees.length === 0 ? (
-            <div className="notice">No employees set for this branch. Please contact admin to add employees.</div>
+            <div className="notice">
+              No employees set for this branch. Please contact admin to add employees.
+            </div>
           ) : (
             <form className="form" onSubmit={submit}>
               <div className="formRow">
@@ -349,7 +389,11 @@ export default function BranchLeavePage() {
               {savedMsg && <div className="successBox">{savedMsg}</div>}
 
               <div className="formActions">
-                <button className="btn" type="submit" disabled={loading || !employeeId || !startDate || !endDate || hours <= 0}>
+                <button
+                  className="btn"
+                  type="submit"
+                  disabled={loading || !employeeId || !startDate || !endDate || hours <= 0}
+                >
                   {loading ? "Saving..." : "Save Leave"}
                 </button>
               </div>

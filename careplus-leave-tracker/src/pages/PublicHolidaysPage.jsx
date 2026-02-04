@@ -3,6 +3,22 @@ import { useStore } from "../context/Store.jsx";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
+function authHeaders(extra = {}) {
+  let token = "";
+  try {
+    const raw = localStorage.getItem("careplus_auth_v1");
+    const session = raw ? JSON.parse(raw) : null;
+    token = session?.token || "";
+  } catch {
+    token = "";
+  }
+
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 export default function PublicHolidaysPage() {
   const { state, dispatch } = useStore();
   const currentYear = new Date().getFullYear();
@@ -31,7 +47,9 @@ export default function PublicHolidaysPage() {
     setLoading(true);
     setMsg("");
     try {
-      const res = await fetch(`${API}/public-holidays?year=${year}`);
+      const res = await fetch(`${API}/public-holidays?year=${year}`, {
+        headers: authHeaders(),
+      });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
 
@@ -70,7 +88,7 @@ export default function PublicHolidaysPage() {
     try {
       const res = await fetch(`${API}/public-holidays`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ date: newDate, name: newName.trim(), region: null }),
       });
 
@@ -94,6 +112,7 @@ export default function PublicHolidaysPage() {
     try {
       const res = await fetch(`${API}/public-holidays?date=${encodeURIComponent(date)}`, {
         method: "DELETE",
+        headers: authHeaders(),
       });
 
       if (!res.ok) throw new Error(await res.text());

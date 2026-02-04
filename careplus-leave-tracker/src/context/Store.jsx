@@ -72,7 +72,7 @@ export function StoreProvider({ children }) {
     try {
       if (!API_URL) throw new Error("VITE_API_URL is not set");
 
-      const res = await fetch(`${API_URL}/branches`);
+      const res = await authedFetch("/branches");
       if (!res.ok) throw new Error(`Failed to fetch branches (${res.status})`);
 
       const data = await res.json();

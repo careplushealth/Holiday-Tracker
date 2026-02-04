@@ -6,6 +6,22 @@ import { eachDayInclusive } from "../utils/dates.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
+function authHeaders(extra = {}) {
+  let token = "";
+  try {
+    const raw = localStorage.getItem("careplus_auth_v1");
+    const session = raw ? JSON.parse(raw) : null;
+    token = session?.token || "";
+  } catch {
+    token = "";
+  }
+
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 export default function CalendarPage() {
   const { state } = useStore();
   const branchId = state.activeBranchId;
@@ -51,8 +67,8 @@ export default function CalendarPage() {
       setMsg("");
       try {
         const [eRes, lRes] = await Promise.all([
-          fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`),
-          fetch(`${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`),
+          fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`, { headers: authHeaders() }),
+          fetch(`${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`, { headers: authHeaders() }),
         ]);
 
         const eData = await eRes.json();
@@ -84,42 +100,38 @@ export default function CalendarPage() {
 
   const employee = useMemo(() => employees.find((e) => e.id === employeeId) || null, [employees, employeeId]);
 
-  // Leaves are already single-day rows from backend: { date: "YYYY-MM-DD", hours, type, comment }
+  // Leaves are returned as ranges: startDate/endDate (YYYY-MM-DD)
+  // We expand ranges into per-day markings so the calendar can colour each date.
   const employeeLeaves = useMemo(() => {
     if (!employeeId) return [];
     return leaves.filter((l) => l.employeeId === employeeId);
   }, [leaves, employeeId]);
 
-  // ISO day -> { type, comment, hours }
-// ISO day -> { type, comment, hours }
-// Backend now returns range leaves: startDate/endDate (YYYY-MM-DD)
-// We expand ranges into per-day markings so the calendar can colour each date.
-const leaveDaysMap = useMemo(() => {
-  const map = new Map();
+  const leaveDaysMap = useMemo(() => {
+    const map = new Map();
 
-  for (const l of employeeLeaves) {
-    const start = l?.startDate || l?.date;
-    const end = l?.endDate || l?.date;
-    if (!start || !end) continue;
+    for (const l of employeeLeaves) {
+      const start = l?.startDate || l?.date;
+      const end = l?.endDate || l?.date;
+      if (!start || !end) continue;
 
-    const days = eachDayInclusive(start, end);
+      const days = eachDayInclusive(start, end);
 
-    // Distribute total hours across the days (calendar just needs *some* hours for tooltip)
-    const totalHours = Number(l.hours) || 0;
-    const perDayHours = days.length ? totalHours / days.length : totalHours;
+      // Distribute total hours across the days (calendar just needs *some* hours for tooltip)
+      const totalHours = Number(l.hours) || 0;
+      const perDayHours = days.length ? totalHours / days.length : totalHours;
 
-    for (const iso of days) {
-      map.set(iso, {
-        type: l.type,
-        comment: l.comment || "",
-        hours: perDayHours,
-      });
+      for (const iso of days) {
+        map.set(iso, {
+          type: l.type,
+          comment: l.comment || "",
+          hours: perDayHours,
+        });
+      }
     }
-  }
 
-  return map;
-}, [employeeLeaves]);
-
+    return map;
+  }, [employeeLeaves]);
 
   const stats = useMemo(() => {
     if (!employee) return null;
@@ -144,8 +156,7 @@ const leaveDaysMap = useMemo(() => {
     const phYear = calcPublicHolidayHoursForYear(year, employee.weeklyHours, publicHolidays);
 
     // Remaining holiday = allowed - annual taken - public holidays deduction
-   const remainingHoliday = Math.max(0, allowedHoliday - totalTaken - phYear);
-
+    const remainingHoliday = Math.max(0, allowedHoliday - totalTaken - phYear);
 
     return {
       allowedHoliday,

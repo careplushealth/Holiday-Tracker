@@ -4,8 +4,32 @@ import { calcPublicHolidayHoursForYear } from "../utils/holidayHours.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
-const DEFAULT_WEEK_STR = { mon: "8", tue: "8", wed: "8", thu: "8", fri: "8", sat: "0", sun: "0" };
+const DEFAULT_WEEK_STR = {
+  mon: "8",
+  tue: "8",
+  wed: "8",
+  thu: "8",
+  fri: "8",
+  sat: "0",
+  sun: "0",
+};
 
+// Reads JWT from the same localStorage key used by Auth.jsx
+function authHeaders(extra = {}) {
+  let token = "";
+  try {
+    const raw = localStorage.getItem("careplus_auth_v1");
+    const session = raw ? JSON.parse(raw) : null;
+    token = session?.token || "";
+  } catch {
+    token = "";
+  }
+
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
 
 export default function EmployeesPage() {
   const { state } = useStore();
@@ -32,18 +56,32 @@ export default function EmployeesPage() {
   useEffect(() => {
     if (!branchId) return;
     (async () => {
-      const res = await fetch(`${API}/employees?branchId=${branchId}`);
-      const data = await res.json();
-      setEmployees(Array.isArray(data) ? data : []);
+      try {
+        const res = await fetch(`${API}/employees?branchId=${branchId}`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        setEmployees(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setEmployees([]);
+      }
     })();
   }, [branchId]);
 
   // Load public holidays for year
   useEffect(() => {
     (async () => {
-      const res = await fetch(`${API}/public-holidays?year=${year}`);
-      const data = await res.json();
-      setPublicHolidays(Array.isArray(data) ? data : []);
+      try {
+        const res = await fetch(`${API}/public-holidays?year=${year}`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        setPublicHolidays(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setPublicHolidays([]);
+      }
     })();
   }, [year]);
 
@@ -53,9 +91,16 @@ export default function EmployeesPage() {
     const from = `${year}-01-01`;
     const to = `${year}-12-31`;
     (async () => {
-      const res = await fetch(`${API}/leaves?branchId=${branchId}&from=${from}&to=${to}`);
-      const data = await res.json();
-      setLeaves(Array.isArray(data) ? data : []);
+      try {
+        const res = await fetch(`${API}/leaves?branchId=${branchId}&from=${from}&to=${to}`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        setLeaves(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+        setLeaves([]);
+      }
     })();
   }, [branchId, year]);
 
@@ -67,26 +112,41 @@ export default function EmployeesPage() {
     return map;
   }, [leaves]);
 
-const leaveHoursTakenByEmployee = useMemo(() => {
-  const map = new Map();
-  for (const l of leaves) {
-    map.set(l.employeeId, (map.get(l.employeeId) || 0) + (Number(l.hours) || 0));
-  }
-  return map;
-}, [leaves]);
-
+  const leaveHoursTakenByEmployee = useMemo(() => {
+    const map = new Map();
+    for (const l of leaves) {
+      map.set(l.employeeId, (map.get(l.employeeId) || 0) + (Number(l.hours) || 0));
+    }
+    return map;
+  }, [leaves]);
 
   async function refresh() {
     if (!branchId) return;
-    const res = await fetch(`${API}/employees?branchId=${branchId}`);
-    const data = await res.json();
-    setEmployees(Array.isArray(data) ? data : []);
+
+    try {
+      const res = await fetch(`${API}/employees?branchId=${branchId}`, {
+        headers: authHeaders(),
+      });
+      const data = await res.json().catch(() => null);
+      setEmployees(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setEmployees([]);
+    }
 
     const from = `${year}-01-01`;
     const to = `${year}-12-31`;
-    const res2 = await fetch(`${API}/leaves?branchId=${branchId}&from=${from}&to=${to}`);
-    const data2 = await res2.json();
-    setLeaves(Array.isArray(data2) ? data2 : []);
+
+    try {
+      const res2 = await fetch(`${API}/leaves?branchId=${branchId}&from=${from}&to=${to}`, {
+        headers: authHeaders(),
+      });
+      const data2 = await res2.json().catch(() => null);
+      setLeaves(Array.isArray(data2) ? data2 : []);
+    } catch (e) {
+      console.error(e);
+      setLeaves([]);
+    }
   }
 
   async function addEmployee(ev) {
@@ -95,9 +155,9 @@ const leaveHoursTakenByEmployee = useMemo(() => {
     if (!n || !branchId) return;
 
     if (!branchId || typeof branchId !== "string") {
-  setMsg("Invalid branch selected.");
-  return;
-}
+      setMsg("Invalid branch selected.");
+      return;
+    }
 
     setLoading(true);
     setMsg("");
@@ -111,7 +171,7 @@ const leaveHoursTakenByEmployee = useMemo(() => {
 
       const res = await fetch(`${API}/employees`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
@@ -159,7 +219,7 @@ const leaveHoursTakenByEmployee = useMemo(() => {
 
       const res = await fetch(`${API}/employees/${editDraft.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
@@ -181,7 +241,10 @@ const leaveHoursTakenByEmployee = useMemo(() => {
     setLoading(true);
     setMsg("");
     try {
-      const res = await fetch(`${API}/employees/${id}`, { method: "DELETE" });
+      const res = await fetch(`${API}/employees/${id}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
       if (!res.ok) throw new Error(await res.text());
       setMsg("Employee deleted.");
       await refresh();
@@ -241,7 +304,11 @@ const leaveHoursTakenByEmployee = useMemo(() => {
               </button>
             </div>
 
-            {msg && <div className="mutedSm" style={{ marginTop: 8 }}>{msg}</div>}
+            {msg && (
+              <div className="mutedSm" style={{ marginTop: 8 }}>
+                {msg}
+              </div>
+            )}
           </form>
         </div>
 
@@ -268,30 +335,43 @@ const leaveHoursTakenByEmployee = useMemo(() => {
               <tbody>
                 {employees.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="emptyCell">No employees yet.</td>
+                    <td colSpan={7} className="emptyCell">
+                      No employees yet.
+                    </td>
                   </tr>
                 ) : (
                   employees.map((emp) => {
                     const allowed = Number(emp.allowedHolidayHoursPerYear || 0);
                     const allTaken = Number(leaveHoursTakenByEmployee.get(emp.id) || 0);
 
-const phYear = calcPublicHolidayHoursForYear(year, emp.weeklyHours, publicHolidays);
-const remaining = Math.max(0, allowed - allTaken - phYear);
+                    const phYear = calcPublicHolidayHoursForYear(
+                      year,
+                      emp.weeklyHours,
+                      publicHolidays
+                    );
+                    const remaining = Math.max(0, allowed - allTaken - phYear);
 
                     return (
                       <tr key={emp.id}>
                         <td className="strong">{emp.name}</td>
                         <td>{round2(allowed)}</td>
-                       <td>{round2(allTaken)}</td>
+                        <td>{round2(allTaken)}</td>
 
                         <td>{round2(phYear)}</td>
                         <td>{round2(remaining)}</td>
                         <td>{round2(allTaken)}</td>
                         <td className="tdRight">
-                          <button className="btn" onClick={() => startEdit(emp)} style={{ marginRight: 8 }}>
+                          <button
+                            className="btn"
+                            onClick={() => startEdit(emp)}
+                            style={{ marginRight: 8 }}
+                          >
                             Edit
                           </button>
-                          <button className="btn btnDanger" onClick={() => deleteEmployee(emp.id)}>
+                          <button
+                            className="btn btnDanger"
+                            onClick={() => deleteEmployee(emp.id)}
+                          >
                             Delete
                           </button>
                         </td>
@@ -323,7 +403,9 @@ const remaining = Math.max(0, allowed - allTaken - phYear);
               <input
                 className="input"
                 value={editDraft.name}
-                onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                onChange={(e) =>
+                  setEditDraft((d) => ({ ...d, name: e.target.value }))
+                }
               />
             </div>
 
@@ -333,25 +415,46 @@ const remaining = Math.max(0, allowed - allTaken - phYear);
                 className="input"
                 inputMode="decimal"
                 value={editDraft.allowedHolidayHoursPerYear}
-                onChange={(e) => setEditDraft((d) => ({ ...d, allowedHolidayHoursPerYear: e.target.value }))}
+                onChange={(e) =>
+                  setEditDraft((d) => ({
+                    ...d,
+                    allowedHolidayHoursPerYear: e.target.value,
+                  }))
+                }
               />
             </div>
 
             <WeekHoursEditor
               value={editDraft.weeklyHours}
-              onChange={(wh) => setEditDraft((d) => ({ ...d, weeklyHours: wh }))}
+              onChange={(wh) =>
+                setEditDraft((d) => ({ ...d, weeklyHours: wh }))
+              }
             />
 
             <div className="formActions">
-              <button className="btn btnDanger" type="button" onClick={cancelEdit} disabled={loading}>
+              <button
+                className="btn btnDanger"
+                type="button"
+                onClick={cancelEdit}
+                disabled={loading}
+              >
                 Cancel
               </button>
-              <button className="btn" type="button" onClick={saveEdit} disabled={loading || !editDraft.name.trim()}>
+              <button
+                className="btn"
+                type="button"
+                onClick={saveEdit}
+                disabled={loading || !editDraft.name.trim()}
+              >
                 {loading ? "Saving..." : "Save Changes"}
               </button>
             </div>
 
-            {msg && <div className="mutedSm" style={{ marginTop: 8 }}>{msg}</div>}
+            {msg && (
+              <div className="mutedSm" style={{ marginTop: 8 }}>
+                {msg}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -371,8 +474,13 @@ function WeekHoursEditor({ value, onChange }) {
   };
 
   return (
-    <div className="card" style={{ padding: 12, borderStyle: "dashed", boxShadow: "none" }}>
-      <div className="strong" style={{ marginBottom: 10 }}>Working hours per day</div>
+    <div
+      className="card"
+      style={{ padding: 12, borderStyle: "dashed", boxShadow: "none" }}
+    >
+      <div className="strong" style={{ marginBottom: 10 }}>
+        Working hours per day
+      </div>
 
       <div className="weekGrid">
         <DayField label="Mon" k="mon" v={v} onChange={onChange} />

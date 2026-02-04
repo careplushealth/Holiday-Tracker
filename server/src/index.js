@@ -44,18 +44,75 @@ function readToken(req) {
   return m ? m[1] : null;
 }
 
+function requireAuth(req, res, next) {
+  try {
+    const token = readToken(req);
+    if (!token) return res.status(401).json({ ok: false, message: "Unauthorized" });
+
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload; // { role, branchId, username, iat, exp }
+    next();
+  } catch (_e) {
+    return res.status(401).json({ ok: false, message: "Invalid token" });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ ok: false, message: "Admin only" });
+  }
+  next();
+}
+
+/**
+ * Admin: can access any branchId.
+ * Branch user: must provide branchId and it must match their token branchId.
+ * Returns normalized branchId as string.
+ */
+function assertBranchAccess(req) {
+  const user = req.user;
+
+  const branchId =
+    req.query.branchId ??
+    req.body.branchId ??
+    req.params.branchId ??
+    null;
+
+  if (user?.role === "admin") {
+    return { ok: true, branchId: branchId ? String(branchId) : null };
+  }
+
+  if (user?.role === "branch") {
+    if (!branchId) return { ok: false, status: 400, message: "branchId required" };
+    if (String(branchId) !== String(user.branchId)) {
+      return { ok: false, status: 403, message: "Forbidden (wrong branch)" };
+    }
+    return { ok: true, branchId: String(branchId) };
+  }
+
+  return { ok: false, status: 403, message: "Forbidden" };
+}
+
 /* ------------------ DEBUG ------------------ */
 app.get("/__routes", (_req, res) => {
-  const routes = [];
-  app._router.stack.forEach((m) => {
-    if (m.route) {
-      const methods = Object.keys(m.route.methods)
-        .map((k) => k.toUpperCase())
-        .join(",");
-      routes.push(`${methods} ${m.route.path}`);
+  try {
+    const stack = app?.router?.stack || app?._router?.stack || [];
+    const routes = [];
+
+    for (const m of stack) {
+      if (m?.route?.path) {
+        const methods = Object.keys(m.route.methods || {})
+          .map((k) => k.toUpperCase())
+          .join(",");
+        routes.push(`${methods} ${m.route.path}`);
+      }
     }
-  });
-  res.json(routes);
+
+    res.json(routes);
+  } catch (e) {
+    console.error("ROUTES_ERROR:", e);
+    res.status(500).json({ error: "Failed to list routes" });
+  }
 });
 
 /* ------------------ HEALTH ------------------ */
@@ -115,16 +172,8 @@ app.post("/auth/login", async (req, res) => {
  * Header: Authorization: Bearer <token>
  * Returns token payload if valid. (Useful for debugging)
  */
-app.get("/auth/me", async (req, res) => {
-  try {
-    const token = readToken(req);
-    if (!token) return res.status(401).json({ ok: false, message: "No token" });
-
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    return res.json({ ok: true, user: payload });
-  } catch (e) {
-    return res.status(401).json({ ok: false, message: "Invalid token" });
-  }
+app.get("/auth/me", requireAuth, async (req, res) => {
+  res.json({ ok: true, user: req.user });
 });
 
 /* ------------------ BRANCHES ------------------ */
@@ -154,10 +203,13 @@ function scheduleRowsToWeeklyHours(rows = []) {
   return map;
 }
 
-app.get("/employees", async (req, res) => {
+// Admin: can fetch any branch employees
+// Branch: can fetch only their own branch employees
+app.get("/employees", requireAuth, async (req, res) => {
   try {
-    const { branchId } = req.query;
-    if (!branchId) return res.status(400).json({ error: "branchId required" });
+    const access = assertBranchAccess(req);
+    if (!access.ok) return res.status(access.status).json({ ok: false, message: access.message });
+    const branchId = access.branchId;
 
     const employees = await prisma.employee.findMany({
       where: { branchId: String(branchId), isActive: true },
@@ -180,8 +232,9 @@ app.get("/employees", async (req, res) => {
 });
 
 /* ------------------ EMPLOYEE CREATE / UPDATE / DELETE ------------------ */
+// Admin only
 
-app.post("/employees", async (req, res) => {
+app.post("/employees", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { branchId, name, allowedHolidayHoursPerYear, weeklyHours } = req.body;
 
@@ -228,7 +281,7 @@ app.post("/employees", async (req, res) => {
   }
 });
 
-app.put("/employees/:id", async (req, res) => {
+app.put("/employees/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, allowedHolidayHoursPerYear, weeklyHours } = req.body;
@@ -283,7 +336,7 @@ app.put("/employees/:id", async (req, res) => {
   }
 });
 
-app.delete("/employees/:id", async (req, res) => {
+app.delete("/employees/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: "id required" });
@@ -306,10 +359,15 @@ app.delete("/employees/:id", async (req, res) => {
 
 /* ------------------ LEAVES (RANGE BASED: 1 ROW PER LEAVE) ------------------ */
 
-app.get("/leaves", async (req, res) => {
+// Admin: can fetch any branch leaves
+// Branch: can fetch only their own branch leaves
+app.get("/leaves", requireAuth, async (req, res) => {
   try {
-    const { branchId, from, to } = req.query;
-    if (!branchId) return res.status(400).json({ error: "branchId required" });
+    const access = assertBranchAccess(req);
+    if (!access.ok) return res.status(access.status).json({ ok: false, message: access.message });
+    const branchId = access.branchId;
+
+    const { from, to } = req.query;
     if (!from || !to)
       return res.status(400).json({ error: "from and to required (YYYY-MM-DD)" });
 
@@ -344,12 +402,15 @@ app.get("/leaves", async (req, res) => {
   }
 });
 
-app.post("/leaves", async (req, res) => {
+app.post("/leaves", requireAuth, async (req, res) => {
   try {
-    const { branchId, employeeId, startDate, endDate, hours, type, comment } =
-      req.body;
+    const access = assertBranchAccess(req);
+    if (!access.ok) return res.status(access.status).json({ ok: false, message: access.message });
+    const branchId = access.branchId;
 
-    if (!branchId || !employeeId || !startDate || !endDate || !type) {
+    const { employeeId, startDate, endDate, hours, type, comment } = req.body;
+
+    if (!employeeId || !startDate || !endDate || !type) {
       return res.status(400).json({
         error: "branchId, employeeId, startDate, endDate and type are required",
       });
@@ -398,10 +459,18 @@ app.post("/leaves", async (req, res) => {
   }
 });
 
-app.delete("/leaves", async (req, res) => {
+app.delete("/leaves", requireAuth, async (req, res) => {
   try {
     const { id } = req.query;
     if (!id) return res.status(400).json({ error: "id required" });
+
+    // Validate branch ownership for branch users before delete
+    const leave = await prisma.leaveEntry.findUnique({ where: { id: String(id) } });
+    if (!leave) return res.json({ ok: true });
+
+    if (req.user.role === "branch" && String(leave.branchId) !== String(req.user.branchId)) {
+      return res.status(403).json({ ok: false, message: "Forbidden (wrong branch)" });
+    }
 
     await prisma.leaveEntry.delete({ where: { id: String(id) } });
     res.json({ ok: true });
@@ -413,7 +482,35 @@ app.delete("/leaves", async (req, res) => {
 });
 
 /* ------------------ PUBLIC HOLIDAYS ------------------ */
-app.post("/public-holidays", async (req, res) => {
+
+// Any logged-in user can view public holidays
+app.get("/public-holidays", requireAuth, async (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    if (!year) return res.status(400).json({ error: "year required" });
+
+    const from = new Date(`${year}-01-01`);
+    const to = new Date(`${year}-12-31`);
+
+    const rows = await prisma.publicHoliday.findMany({
+      where: { date: { gte: from, lte: to } },
+      orderBy: { date: "asc" },
+    });
+
+    res.json(
+      rows.map((h) => ({
+        date: h.date.toISOString().slice(0, 10),
+        name: h.name,
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load public holidays" });
+  }
+});
+
+// Admin only can create/delete public holidays
+app.post("/public-holidays", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { date, name } = req.body;
     const region = req.body.region || "DEFAULT";
@@ -452,32 +549,7 @@ app.post("/public-holidays", async (req, res) => {
   }
 });
 
-app.get("/public-holidays", async (req, res) => {
-  try {
-    const year = Number(req.query.year);
-    if (!year) return res.status(400).json({ error: "year required" });
-
-    const from = new Date(`${year}-01-01`);
-    const to = new Date(`${year}-12-31`);
-
-    const rows = await prisma.publicHoliday.findMany({
-      where: { date: { gte: from, lte: to } },
-      orderBy: { date: "asc" },
-    });
-
-    res.json(
-      rows.map((h) => ({
-        date: h.date.toISOString().slice(0, 10),
-        name: h.name,
-      }))
-    );
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to load public holidays" });
-  }
-});
-
-app.delete("/public-holidays", async (req, res) => {
+app.delete("/public-holidays", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { date } = req.query;
     const region = req.query.region || "DEFAULT";
