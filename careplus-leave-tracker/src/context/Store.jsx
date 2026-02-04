@@ -1,6 +1,14 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+} from "react";
 import { loadState, saveState } from "../utils/storage.js";
 import { toISODate } from "../utils/dates.js";
+import { API_URL } from "../utils/api.js";
 
 const StoreContext = createContext(null);
 
@@ -20,13 +28,11 @@ function reducer(state, action) {
   switch (action.type) {
     case "SET_BRANCHES": {
       const branches = action.payload || [];
-
       return {
         ...state,
         branches,
         activeBranchId:
-          state.activeBranchId &&
-          branches.some((b) => b.id === state.activeBranchId)
+          state.activeBranchId && branches.some((b) => b.id === state.activeBranchId)
             ? state.activeBranchId
             : branches[0]?.id ?? null,
       };
@@ -62,7 +68,26 @@ export function StoreProvider({ children }) {
     saveState(state);
   }, [state]);
 
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const loadBranches = useCallback(async () => {
+    try {
+      if (!API_URL) throw new Error("VITE_API_URL is not set");
+
+      const res = await fetch(`${API_URL}/branches`);
+      if (!res.ok) throw new Error(`Failed to fetch branches (${res.status})`);
+
+      const data = await res.json();
+      dispatch({ type: "SET_BRANCHES", payload: data });
+      return { ok: true, data };
+    } catch (e) {
+      console.error("loadBranches error:", e);
+      return { ok: false, message: e?.message || "Failed to load branches" };
+    }
+  }, []);
+
+  const value = useMemo(
+    () => ({ state, dispatch, loadBranches }),
+    [state, loadBranches]
+  );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
