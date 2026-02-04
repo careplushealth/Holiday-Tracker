@@ -32,7 +32,9 @@ app.use((req, _res, next) => {
 
 /* ------------------ AUTH HELPERS ------------------ */
 function signToken(payload) {
-  if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not set");
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not set");
+  }
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 }
 
@@ -45,54 +47,71 @@ function readToken(req) {
 function requireAuth(req, res, next) {
   try {
     const token = readToken(req);
-    if (!token) return res.status(401).json({ ok: false, message: "Missing token" });
+    if (!token) return res.status(401).json({ ok: false, message: "Unauthorized" });
+
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = payload; // { role, branchId, username, iat, exp }
-    return next();
-  } catch (e) {
+    next();
+  } catch (_e) {
     return res.status(401).json({ ok: false, message: "Invalid token" });
   }
 }
 
-function requireRole(...roles) {
-  return (req, res, next) => {
-    const role = req.user?.role;
-    if (!role || !roles.includes(role)) {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
-    }
-    next();
-  };
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ ok: false, message: "Admin only" });
+  }
+  next();
 }
 
-function assertBranchAccess(req, res, branchId) {
-  // Admin can access any branch
-  if (req.user?.role === "admin") return true;
+/**
+ * Admin: can access any branchId.
+ * Branch user: must provide branchId and it must match their token branchId.
+ * Returns normalized branchId as string.
+ */
+function assertBranchAccess(req) {
+  const user = req.user;
 
-  // Branch users can only access their own branch
-  if (req.user?.role === "branch") {
-    if (!req.user.branchId) return false;
-    return String(req.user.branchId) === String(branchId);
+  const branchId =
+    req.query.branchId ??
+    req.body.branchId ??
+    req.params.branchId ??
+    null;
+
+  if (user?.role === "admin") {
+    return { ok: true, branchId: branchId ? String(branchId) : null };
   }
 
-  return false;
+  if (user?.role === "branch") {
+    if (!branchId) return { ok: false, status: 400, message: "branchId required" };
+    if (String(branchId) !== String(user.branchId)) {
+      return { ok: false, status: 403, message: "Forbidden (wrong branch)" };
+    }
+    return { ok: true, branchId: String(branchId) };
+  }
+
+  return { ok: false, status: 403, message: "Forbidden" };
 }
 
 /* ------------------ DEBUG ------------------ */
 app.get("/__routes", (_req, res) => {
   try {
+    const stack = app?.router?.stack || app?._router?.stack || [];
     const routes = [];
-    app._router.stack.forEach((m) => {
-      if (m.route) {
-        const methods = Object.keys(m.route.methods)
+
+    for (const m of stack) {
+      if (m?.route?.path) {
+        const methods = Object.keys(m.route.methods || {})
           .map((k) => k.toUpperCase())
           .join(",");
         routes.push(`${methods} ${m.route.path}`);
       }
-    });
+    }
+
     res.json(routes);
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Internal Server Error");
+    console.error("ROUTES_ERROR:", e);
+    res.status(500).json({ error: "Failed to list routes" });
   }
 });
 
@@ -102,11 +121,18 @@ app.get("/health", (_req, res) => {
 });
 
 /* ------------------ AUTH ------------------ */
+/**
+ * POST /auth/login
+ * Body: { username, password }
+ * Returns: { ok, token, role, branchId, username }
+ */
 app.post("/auth/login", async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) {
-      return res.status(400).json({ ok: false, message: "Username and password required." });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Username and password required." });
     }
 
     const user = await prisma.user.findUnique({
@@ -141,12 +167,16 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
+/**
+ * GET /auth/me
+ * Header: Authorization: Bearer <token>
+ * Returns token payload if valid. (Useful for debugging)
+ */
 app.get("/auth/me", requireAuth, async (req, res) => {
-  return res.json({ ok: true, user: req.user });
+  res.json({ ok: true, user: req.user });
 });
 
 /* ------------------ BRANCHES ------------------ */
-// Safe to allow without auth (login screen needs this)
 app.get("/branches", async (_req, res) => {
   try {
     const branches = await prisma.branch.findMany({ orderBy: { name: "asc" } });
@@ -173,14 +203,13 @@ function scheduleRowsToWeeklyHours(rows = []) {
   return map;
 }
 
+// Admin: can fetch any branch employees
+// Branch: can fetch only their own branch employees
 app.get("/employees", requireAuth, async (req, res) => {
   try {
-    const { branchId } = req.query;
-    if (!branchId) return res.status(400).json({ error: "branchId required" });
-
-    if (!assertBranchAccess(req, res, branchId)) {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
-    }
+    const access = assertBranchAccess(req);
+    if (!access.ok) return res.status(access.status).json({ ok: false, message: access.message });
+    const branchId = access.branchId;
 
     const employees = await prisma.employee.findMany({
       where: { branchId: String(branchId), isActive: true },
@@ -204,7 +233,8 @@ app.get("/employees", requireAuth, async (req, res) => {
 
 /* ------------------ EMPLOYEE CREATE / UPDATE / DELETE ------------------ */
 // Admin only
-app.post("/employees", requireAuth, requireRole("admin"), async (req, res) => {
+
+app.post("/employees", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { branchId, name, allowedHolidayHoursPerYear, weeklyHours } = req.body;
 
@@ -213,7 +243,7 @@ app.post("/employees", requireAuth, requireRole("admin"), async (req, res) => {
 
     const parts = String(name).trim().split(/\s+/);
     const firstName = parts.shift() || "";
-    const lastName = parts.join(" ");
+    const lastName = parts.join(" "); // can be empty
 
     const emp = await prisma.employee.create({
       data: {
@@ -251,7 +281,7 @@ app.post("/employees", requireAuth, requireRole("admin"), async (req, res) => {
   }
 });
 
-app.put("/employees/:id", requireAuth, requireRole("admin"), async (req, res) => {
+app.put("/employees/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, allowedHolidayHoursPerYear, weeklyHours } = req.body;
@@ -283,7 +313,9 @@ app.put("/employees/:id", requireAuth, requireRole("admin"), async (req, res) =>
       { weekday: 7, hours: Number(wh.sun) || 0 },
     ];
 
-    await prisma.employeeWorkSchedule.deleteMany({ where: { employeeId: String(id) } });
+    await prisma.employeeWorkSchedule.deleteMany({
+      where: { employeeId: String(id) },
+    });
 
     await prisma.employeeWorkSchedule.createMany({
       data: rows.map((r) => ({
@@ -304,27 +336,17 @@ app.put("/employees/:id", requireAuth, requireRole("admin"), async (req, res) =>
   }
 });
 
-// Admin only: instead of hard delete, we will SOFT DELETE if linked to leaves
-app.delete("/employees/:id", requireAuth, requireRole("admin"), async (req, res) => {
+app.delete("/employees/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: "id required" });
 
-    // If employee has leaves, soft delete instead of failing FK
-    const leavesCount = await prisma.leaveEntry.count({ where: { employeeId: String(id) } });
-    if (leavesCount > 0) {
-      await prisma.employee.update({
-        where: { id: String(id) },
-        data: { isActive: false },
-      });
-      return res.json({ ok: true, softDeleted: true });
-    }
-
-    // No leaves: safe to hard-delete
-    await prisma.employeeWorkSchedule.deleteMany({ where: { employeeId: String(id) } });
+    await prisma.employeeWorkSchedule.deleteMany({
+      where: { employeeId: String(id) },
+    });
     await prisma.employee.delete({ where: { id: String(id) } });
 
-    res.json({ ok: true, softDeleted: false });
+    res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /employees/:id error:", err);
     res.status(500).json({
@@ -335,16 +357,19 @@ app.delete("/employees/:id", requireAuth, requireRole("admin"), async (req, res)
   }
 });
 
-/* ------------------ LEAVES ------------------ */
+/* ------------------ LEAVES (RANGE BASED: 1 ROW PER LEAVE) ------------------ */
+
+// Admin: can fetch any branch leaves
+// Branch: can fetch only their own branch leaves
 app.get("/leaves", requireAuth, async (req, res) => {
   try {
-    const { branchId, from, to } = req.query;
-    if (!branchId) return res.status(400).json({ error: "branchId required" });
-    if (!from || !to) return res.status(400).json({ error: "from and to required (YYYY-MM-DD)" });
+    const access = assertBranchAccess(req);
+    if (!access.ok) return res.status(access.status).json({ ok: false, message: access.message });
+    const branchId = access.branchId;
 
-    if (!assertBranchAccess(req, res, branchId)) {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
-    }
+    const { from, to } = req.query;
+    if (!from || !to)
+      return res.status(400).json({ error: "from and to required (YYYY-MM-DD)" });
 
     const fromDate = new Date(String(from));
     const toDate = new Date(String(to));
@@ -377,19 +402,18 @@ app.get("/leaves", requireAuth, async (req, res) => {
   }
 });
 
-// Branch + Admin can create leaves, but branch can only for own branchId
-app.post("/leaves", requireAuth, requireRole("admin", "branch"), async (req, res) => {
+app.post("/leaves", requireAuth, async (req, res) => {
   try {
-    const { branchId, employeeId, startDate, endDate, hours, type, comment } = req.body;
+    const access = assertBranchAccess(req);
+    if (!access.ok) return res.status(access.status).json({ ok: false, message: access.message });
+    const branchId = access.branchId;
 
-    if (!branchId || !employeeId || !startDate || !endDate || !type) {
+    const { employeeId, startDate, endDate, hours, type, comment } = req.body;
+
+    if (!employeeId || !startDate || !endDate || !type) {
       return res.status(400).json({
         error: "branchId, employeeId, startDate, endDate and type are required",
       });
-    }
-
-    if (!assertBranchAccess(req, res, branchId)) {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const s = new Date(String(startDate));
@@ -435,18 +459,17 @@ app.post("/leaves", requireAuth, requireRole("admin", "branch"), async (req, res
   }
 });
 
-// ✅ NOW delete leave works (branch can delete only its branch leaves)
-app.delete("/leaves", requireAuth, requireRole("admin", "branch"), async (req, res) => {
+app.delete("/leaves", requireAuth, async (req, res) => {
   try {
     const { id } = req.query;
     if (!id) return res.status(400).json({ error: "id required" });
 
-    // check leave exists and branch scope
+    // Validate branch ownership for branch users before delete
     const leave = await prisma.leaveEntry.findUnique({ where: { id: String(id) } });
     if (!leave) return res.json({ ok: true });
 
-    if (!assertBranchAccess(req, res, leave.branchId)) {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
+    if (req.user.role === "branch" && String(leave.branchId) !== String(req.user.branchId)) {
+      return res.status(403).json({ ok: false, message: "Forbidden (wrong branch)" });
     }
 
     await prisma.leaveEntry.delete({ where: { id: String(id) } });
@@ -459,42 +482,8 @@ app.delete("/leaves", requireAuth, requireRole("admin", "branch"), async (req, r
 });
 
 /* ------------------ PUBLIC HOLIDAYS ------------------ */
-// Admin only
-app.post("/public-holidays", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const { date, name } = req.body;
-    const region = req.body.region || "DEFAULT";
 
-    if (!date || !name?.trim()) {
-      return res.status(400).json({ error: "date and name required" });
-    }
-
-    const d = new Date(date);
-    if (Number.isNaN(d.getTime())) {
-      return res.status(400).json({ error: "Invalid date" });
-    }
-
-    const holiday = await prisma.publicHoliday.upsert({
-      where: { date_region: { date: d, region } },
-      update: { name: name.trim() },
-      create: { date: d, name: name.trim(), region },
-    });
-
-    res.json({
-      ok: true,
-      holiday: {
-        date: holiday.date.toISOString().slice(0, 10),
-        name: holiday.name,
-        region: holiday.region,
-      },
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to save public holiday" });
-  }
-});
-
-// Both roles can READ public holidays
+// Any logged-in user can view public holidays
 app.get("/public-holidays", requireAuth, async (req, res) => {
   try {
     const year = Number(req.query.year);
@@ -520,15 +509,60 @@ app.get("/public-holidays", requireAuth, async (req, res) => {
   }
 });
 
-// Admin only
-app.delete("/public-holidays", requireAuth, requireRole("admin"), async (req, res) => {
+// Admin only can create/delete public holidays
+app.post("/public-holidays", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { date, name } = req.body;
+    const region = req.body.region || "DEFAULT";
+
+    if (!date || !name?.trim()) {
+      return res.status(400).json({ error: "date and name required" });
+    }
+
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) {
+      return res.status(400).json({ error: "Invalid date" });
+    }
+
+    const holiday = await prisma.publicHoliday.upsert({
+      where: {
+        date_region: {
+          date: d,
+          region: region,
+        },
+      },
+      update: { name: name.trim() },
+      create: { date: d, name: name.trim(), region: region },
+    });
+
+    res.json({
+      ok: true,
+      holiday: {
+        date: holiday.date.toISOString().slice(0, 10),
+        name: holiday.name,
+        region: holiday.region,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to save public holiday" });
+  }
+});
+
+app.delete("/public-holidays", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { date } = req.query;
     const region = req.query.region || "DEFAULT";
+
     if (!date) return res.status(400).json({ error: "date required" });
 
     await prisma.publicHoliday.delete({
-      where: { date_region: { date: new Date(date), region } },
+      where: {
+        date_region: {
+          date: new Date(date),
+          region: region,
+        },
+      },
     });
 
     res.json({ ok: true });
@@ -541,4 +575,6 @@ app.delete("/public-holidays", requireAuth, requireRole("admin"), async (req, re
 
 /* ------------------ START ------------------ */
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`✅ API running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ API running on port ${PORT}`);
+});
