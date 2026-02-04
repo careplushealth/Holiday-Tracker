@@ -4,6 +4,8 @@ import cors from "cors";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createRequire } from "module";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require("../generated/prisma");
@@ -28,6 +30,20 @@ app.use((req, _res, next) => {
   next();
 });
 
+/* ------------------ AUTH HELPERS ------------------ */
+function signToken(payload) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not set");
+  }
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
+}
+
+function readToken(req) {
+  const h = req.headers.authorization || "";
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
+}
+
 /* ------------------ DEBUG ------------------ */
 app.get("/__routes", (_req, res) => {
   const routes = [];
@@ -45,6 +61,70 @@ app.get("/__routes", (_req, res) => {
 /* ------------------ HEALTH ------------------ */
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+/* ------------------ AUTH ------------------ */
+/**
+ * POST /auth/login
+ * Body: { username, password }
+ * Returns: { ok, token, role, branchId, username }
+ */
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Username and password required." });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { username: String(username).trim() },
+    });
+
+    if (!user) {
+      return res.status(401).json({ ok: false, message: "Invalid credentials." });
+    }
+
+    const ok = await bcrypt.compare(String(password), user.password);
+    if (!ok) {
+      return res.status(401).json({ ok: false, message: "Invalid credentials." });
+    }
+
+    const token = signToken({
+      role: user.role,
+      branchId: user.branchId,
+      username: user.username,
+    });
+
+    return res.json({
+      ok: true,
+      token,
+      role: user.role,
+      branchId: user.branchId,
+      username: user.username,
+    });
+  } catch (e) {
+    console.error("LOGIN_ERROR:", e);
+    return res.status(500).json({ ok: false, message: "Login failed." });
+  }
+});
+
+/**
+ * GET /auth/me
+ * Header: Authorization: Bearer <token>
+ * Returns token payload if valid. (Useful for debugging)
+ */
+app.get("/auth/me", async (req, res) => {
+  try {
+    const token = readToken(req);
+    if (!token) return res.status(401).json({ ok: false, message: "No token" });
+
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    return res.json({ ok: true, user: payload });
+  } catch (e) {
+    return res.status(401).json({ ok: false, message: "Invalid token" });
+  }
 });
 
 /* ------------------ BRANCHES ------------------ */
@@ -99,12 +179,8 @@ app.get("/employees", async (req, res) => {
   }
 });
 
-
-
-
 /* ------------------ EMPLOYEE CREATE / UPDATE / DELETE ------------------ */
 
-// Create employee (if you already have it, keep yours – otherwise use this)
 app.post("/employees", async (req, res) => {
   try {
     const { branchId, name, allowedHolidayHoursPerYear, weeklyHours } = req.body;
@@ -126,7 +202,6 @@ app.post("/employees", async (req, res) => {
       },
     });
 
-    // Write schedule rows (1..7)
     const wh = weeklyHours || {};
     const rows = [
       { weekday: 1, hours: Number(wh.mon) || 0 },
@@ -153,7 +228,6 @@ app.post("/employees", async (req, res) => {
   }
 });
 
-// ✅ UPDATE employee
 app.put("/employees/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -166,7 +240,6 @@ app.put("/employees/:id", async (req, res) => {
     const firstName = parts.shift() || "";
     const lastName = parts.join(" ");
 
-    // Update core employee fields
     await prisma.employee.update({
       where: { id: String(id) },
       data: {
@@ -176,7 +249,6 @@ app.put("/employees/:id", async (req, res) => {
       },
     });
 
-    // Rewrite schedule rows (simple + reliable)
     const wh = weeklyHours || {};
     const rows = [
       { weekday: 1, hours: Number(wh.mon) || 0 },
@@ -188,7 +260,6 @@ app.put("/employees/:id", async (req, res) => {
       { weekday: 7, hours: Number(wh.sun) || 0 },
     ];
 
-    // Delete old schedule and recreate
     await prisma.employeeWorkSchedule.deleteMany({
       where: { employeeId: String(id) },
     });
@@ -212,20 +283,18 @@ app.put("/employees/:id", async (req, res) => {
   }
 });
 
-// ✅ DELETE employee
 app.delete("/employees/:id", async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: "id required" });
 
-    // If you prefer soft-delete, set isActive=false instead.
-    // For now, hard-delete safely: delete schedule first then employee.
-    await prisma.employeeWorkSchedule.deleteMany({ where: { employeeId: String(id) } });
+    await prisma.employeeWorkSchedule.deleteMany({
+      where: { employeeId: String(id) },
+    });
     await prisma.employee.delete({ where: { id: String(id) } });
 
     res.json({ ok: true });
   } catch (err) {
-    // If employee has leaves, delete might fail due to FK. In that case, soft-delete is better.
     console.error("DELETE /employees/:id error:", err);
     res.status(500).json({
       error: "Failed to delete employee",
@@ -235,17 +304,8 @@ app.delete("/employees/:id", async (req, res) => {
   }
 });
 
-
-
-
-
-
-
 /* ------------------ LEAVES (RANGE BASED: 1 ROW PER LEAVE) ------------------ */
-/**
- * GET /leaves?branchId=...&from=YYYY-MM-DD&to=YYYY-MM-DD
- * Returns leaves that OVERLAP the date range.
- */
+
 app.get("/leaves", async (req, res) => {
   try {
     const { branchId, from, to } = req.query;
@@ -284,14 +344,10 @@ app.get("/leaves", async (req, res) => {
   }
 });
 
-/**
- * POST /leaves
- * Body: { branchId, employeeId, startDate, endDate, hours, type, comment }
- * Creates ONE leave record for the whole range.
- */
 app.post("/leaves", async (req, res) => {
   try {
-    const { branchId, employeeId, startDate, endDate, hours, type, comment } = req.body;
+    const { branchId, employeeId, startDate, endDate, hours, type, comment } =
+      req.body;
 
     if (!branchId || !employeeId || !startDate || !endDate || !type) {
       return res.status(400).json({
@@ -305,7 +361,6 @@ app.post("/leaves", async (req, res) => {
       return res.status(400).json({ error: "Invalid startDate/endDate" });
     }
 
-    // Ensure chronological order
     const start = s <= e ? s : e;
     const end = s <= e ? e : s;
 
@@ -317,7 +372,7 @@ app.post("/leaves", async (req, res) => {
         endDate: end,
         hours: Number(hours) || 0,
         type: String(type),
-        comment: comment?.trim() ? String(comment).trim() : null, // ✅ FIXED
+        comment: comment?.trim() ? String(comment).trim() : null,
       },
     });
 
@@ -343,10 +398,6 @@ app.post("/leaves", async (req, res) => {
   }
 });
 
-/**
- * DELETE /leaves?id=...
- * Deletes a single leave record by id.
- */
 app.delete("/leaves", async (req, res) => {
   try {
     const { id } = req.query;
