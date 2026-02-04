@@ -261,10 +261,7 @@ export default function BranchLeavePage() {
       <div className="pageHeader">
         <h1 className="h1">Leave Entry</h1>
         <p className="muted">{branchName} • Branch access: add leave only.</p>
-        <p className="mutedSm">
-          Debug: session.branchId = <b>{String(session?.branchId || "")}</b> • resolved branchId ={" "}
-          <b>{String(branchId || "")}</b>
-        </p>
+       
       </div>
 
       {missingBranchLink && (

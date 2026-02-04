@@ -44,14 +44,10 @@ export default function Layout() {
         <div className="brand">
           <div className="brandText">
             <div className="brandTitle">
-              <img
-  src={`${import.meta.env.BASE_URL}CPH.png`}
-  alt="CarePlus Health"
-  className="brandLogo"
-/>
+             Employee Leave Tracker
 
             </div>
-            <div className="brandSub">Employee Leave Tracker</div>
+            <div className="brandSub">CareplusHealth - Internal Tool</div>
           </div>
         </div>
 
