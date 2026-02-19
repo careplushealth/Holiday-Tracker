@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { API_URL } from "../utils/api.js";
 
 const AuthContext = createContext(null);
 const AUTH_KEY = "careplus_auth_v1";
+
+/* ---------------- SESSION STORAGE ---------------- */
 
 function loadSession() {
   try {
@@ -21,6 +29,8 @@ function saveSession(session) {
     // ignore
   }
 }
+
+/* ---------------- API LOGIN ---------------- */
 
 async function apiLogin(username, password) {
   if (!API_URL) {
@@ -47,25 +57,40 @@ async function apiLogin(username, password) {
   }
 }
 
-export function AuthProvider({ children }) {
-  const [session, setSession] = useState(() => loadSession());
+/* ---------------- PROVIDER ---------------- */
 
+export function AuthProvider({ children }) {
+  const [session, setSession] = useState(null);
+  const [initialized, setInitialized] = useState(false);
+
+  // Restore session once on mount
   useEffect(() => {
-    saveSession(session);
-  }, [session]);
+    const stored = loadSession();
+    if (stored) setSession(stored);
+    setInitialized(true);
+  }, []);
+
+  // Persist session changes
+  useEffect(() => {
+    if (initialized) {
+      saveSession(session);
+    }
+  }, [session, initialized]);
 
   const api = useMemo(() => {
     async function loginAdmin(username, password) {
       const u = username.trim();
-      const p = password;
-
-      const result = await apiLogin(u, p);
+      const result = await apiLogin(u, password);
       if (!result.ok) return result;
 
-      const { role, token, branchId, username: returnedUsername } = result.data;
+      const { role, token, branchId, username: returnedUsername } =
+        result.data;
 
       if (role !== "admin") {
-        return { ok: false, message: "This account is not an admin account." };
+        return {
+          ok: false,
+          message: "This account is not an admin account.",
+        };
       }
 
       setSession({
@@ -80,21 +105,25 @@ export function AuthProvider({ children }) {
 
     async function loginBranch(selectedBranchId, username, password) {
       const u = username.trim();
-      const p = password;
-
-      const result = await apiLogin(u, p);
+      const result = await apiLogin(u, password);
       if (!result.ok) return result;
 
-      const { role, token, branchId, username: returnedUsername } = result.data;
+      const { role, token, branchId, username: returnedUsername } =
+        result.data;
 
       if (role !== "branch") {
-        return { ok: false, message: "This account is not a branch account." };
+        return {
+          ok: false,
+          message: "This account is not a branch account.",
+        };
       }
 
-      // Critical security check:
-      // Branch user must match the branch selected in the dropdown.
       if (!branchId || String(branchId) !== String(selectedBranchId)) {
-        return { ok: false, message: "This user does not belong to the selected branch." };
+        return {
+          ok: false,
+          message:
+            "This user does not belong to the selected branch.",
+        };
       }
 
       setSession({
@@ -111,14 +140,51 @@ export function AuthProvider({ children }) {
       setSession(null);
     }
 
-    return { session, loginAdmin, loginBranch, logout };
-  }, [session]);
+    /**
+     * Authenticated fetch helper
+     * Automatically attaches Bearer token
+     */
+    async function authFetch(url, options = {}) {
+      if (!session?.token) {
+        throw new Error("Not authenticated");
+      }
 
-  return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;
+      const headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${session.token}`,
+      };
+
+      return fetch(url, {
+        ...options,
+        headers,
+      });
+    }
+
+    return {
+      session,
+      initialized,
+      loginAdmin,
+      loginBranch,
+      logout,
+      authFetch,
+    };
+  }, [session, initialized]);
+
+  // Prevent rendering before session restore completes
+  if (!initialized) return null;
+
+  return (
+    <AuthContext.Provider value={api}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
+
+/* ---------------- HOOK ---------------- */
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+  if (!ctx)
+    throw new Error("useAuth must be used inside AuthProvider");
   return ctx;
 }
