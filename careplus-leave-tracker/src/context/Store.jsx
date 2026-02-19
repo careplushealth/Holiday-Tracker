@@ -32,7 +32,8 @@ function reducer(state, action) {
         ...state,
         branches,
         activeBranchId:
-          state.activeBranchId && branches.some((b) => b.id === state.activeBranchId)
+          state.activeBranchId &&
+          branches.some((b) => b.id === state.activeBranchId)
             ? state.activeBranchId
             : branches[0]?.id ?? null,
       };
@@ -72,11 +73,24 @@ export function StoreProvider({ children }) {
     try {
       if (!API_URL) throw new Error("VITE_API_URL is not set");
 
-      const res = await authedFetch("/branches");
-      if (!res.ok) throw new Error(`Failed to fetch branches (${res.status})`);
+      // 🔐 Get token from storage (adjust if you store it differently)
+      const token = localStorage.getItem("token");
+
+      const res = await fetch(`${API_URL}/branches`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch branches (${res.status})`);
+      }
 
       const data = await res.json();
+
       dispatch({ type: "SET_BRANCHES", payload: data });
+
       return { ok: true, data };
     } catch (e) {
       console.error("loadBranches error:", e);
@@ -89,7 +103,11 @@ export function StoreProvider({ children }) {
     [state, loadBranches]
   );
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <StoreContext.Provider value={value}>
+      {children}
+    </StoreContext.Provider>
+  );
 }
 
 export function useStore() {

@@ -8,24 +8,44 @@ export default function LoginPage() {
   const { loginAdmin, loginBranch } = useAuth();
   const { state, loadBranches } = useStore();
 
-  const branches = state.branches || [];
+  const branches = state?.branches || [];
 
   const [mode, setMode] = useState("admin"); // admin | branch
   const [branchId, setBranchId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [loadingBranches, setLoadingBranches] = useState(false);
 
-  // Load branches on first mount (login page needs them)
+  /* ---------------- LOAD BRANCHES ---------------- */
+
   useEffect(() => {
-    if (!branches.length) {
-      loadBranches();
+    let mounted = true;
+
+    async function init() {
+      if (!branches.length) {
+        try {
+          setLoadingBranches(true);
+          await loadBranches();
+        } catch (e) {
+          console.error("Failed to load branches:", e);
+        } finally {
+          if (mounted) setLoadingBranches(false);
+        }
+      }
     }
-    // only run once on mount
+
+    init();
+
+    return () => {
+      mounted = false;
+    };
+    // intentionally only once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When switching to branch mode OR when branches arrive, set a default branch
+  /* ---------------- DEFAULT BRANCH ---------------- */
+
   useEffect(() => {
     if (mode === "branch" && !branchId && branches.length) {
       setBranchId(branches[0].id);
@@ -36,7 +56,9 @@ export default function LoginPage() {
     return branches.find((b) => b.id === branchId)?.name || "";
   }, [branches, branchId]);
 
- async function submit(e) {
+  /* ---------------- SUBMIT ---------------- */
+
+  async function submit(e) {
     e.preventDefault();
     setErr("");
 
@@ -51,6 +73,8 @@ export default function LoginPage() {
       nav("/branch", { replace: true });
     }
   }
+
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="loginShell">
@@ -96,10 +120,12 @@ export default function LoginPage() {
                 className="select"
                 value={branchId}
                 onChange={(e) => setBranchId(e.target.value)}
-                disabled={!branches.length}
+                disabled={loadingBranches || !branches.length}
               >
-                {!branches.length ? (
+                {loadingBranches ? (
                   <option value="">Loading branches...</option>
+                ) : !branches.length ? (
+                  <option value="">No branches found</option>
                 ) : (
                   branches.map((b) => (
                     <option key={b.id} value={b.id}>
