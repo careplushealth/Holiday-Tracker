@@ -27,6 +27,7 @@ export default function LeaveEntryPage() {
   const [endDate, setEndDate] = useState("");
   const [type, setType] = useState("ANNUAL");
   const [comment, setComment] = useState("");
+  const [displayHours, setDisplayHours] = useState(0);
 
   // Determine relevant year (for holidays + leaves range)
   const year = useMemo(() => {
@@ -56,6 +57,12 @@ export default function LeaveEntryPage() {
     if (!startDate || !endDate || !selectedEmployee) return 0;
     return calculateHours(startDate, endDate, selectedEmployee.weeklyHours, publicHolidaySet);
   }, [startDate, endDate, selectedEmployee, publicHolidaySet]);
+
+  // Sync displayHours whenever auto-calc changes (e.g. date or employee changes)
+  // User can still override by typing in the input
+  useEffect(() => {
+    setDisplayHours(hours);
+  }, [hours]);
 
   // Load employees + leaves whenever branchId or year changes
   useEffect(() => {
@@ -119,58 +126,92 @@ export default function LeaveEntryPage() {
     setLeaves(Array.isArray(data) ? data : []);
   }
 
-async function submit(e) {
-  e.preventDefault();
-  if (!branchId) {
-    setMsg("Select a branch first.");
-    return;
+  async function submit(e) {
+    e.preventDefault();
+    if (!branchId) {
+      setMsg("Select a branch first.");
+      return;
+    }
+    const finalHours = Number(displayHours) || 0;
+    if (!employeeId || !startDate || !endDate || finalHours <= 0) return;
+    if (startDate > endDate) {
+      setMsg("End date must be after start date.");
+      return;
+    }
+
+    setLoading(true);
+    setMsg("");
+
+    try {
+      // ✅ NEW: store ONE record with start/end range
+      const payload = {
+        branchId,
+        employeeId,
+        startDate,
+        endDate,
+        hours: Number(displayHours) || 0,
+        type,
+        comment: comment.trim(),
+      };
+
+      const res = await fetch(`${API}/leaves`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      setStartDate("");
+      setEndDate("");
+      setComment("");
+      setDisplayHours(0);
+      setMsg("Leave saved.");
+      await refreshLeaves();
+    } catch (err) {
+      console.error(err);
+      setMsg("Error saving leave. Check server logs.");
+    } finally {
+      setLoading(false);
+    }
   }
-  if (!employeeId || !startDate || !endDate || hours <= 0) return;
-  if (startDate > endDate) {
-  setMsg("End date must be after start date.");
-  return;
-}
-
-  setLoading(true);
-  setMsg("");
-
-  try {
-    // ✅ NEW: store ONE record with start/end range
-    const payload = {
-      branchId,
-      employeeId,
-      startDate,
-      endDate,
-      hours,
-      type,
-      comment: comment.trim(),
-    };
-
-    const res = await fetch(`${API}/leaves`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) throw new Error(await res.text());
-
-    setStartDate("");
-    setEndDate("");
-    setComment("");
-    setMsg("Leave saved.");
-    await refreshLeaves();
-  } catch (err) {
-    console.error(err);
-    setMsg("Error saving leave. Check server logs.");
-  } finally {
-    setLoading(false);
-  }
-}
 
 
-  async function onDeleteLeave(_leaveId) {
-    // Server has no DELETE endpoint for leaves yet.
-    setMsg("Delete leave isn’t enabled yet (no server endpoint).");
+  async function onDeleteLeave(leaveId) {
+    if (!leaveId) return;
+    if (!window.confirm("Are you sure you want to delete this leave record?")) return;
+
+    // Read auth token from localStorage (same key used by Auth.jsx)
+    let token = "";
+    try {
+      const raw = localStorage.getItem("careplus_auth_v1");
+      const session = raw ? JSON.parse(raw) : null;
+      token = session?.token || "";
+    } catch {
+      token = "";
+    }
+
+    setLoading(true);
+    setMsg("");
+    try {
+      const res = await fetch(`${API}/leaves?id=${encodeURIComponent(leaveId)}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      setMsg("Leave deleted.");
+      await refreshLeaves();
+    } catch (err) {
+      console.error(err);
+      setMsg("Error deleting leave. Check server logs.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const quickStats = useMemo(() => {
@@ -278,8 +319,17 @@ async function submit(e) {
                       </select>
                     </div>
                     <div>
-                      <label className="label">Hours (auto)</label>
-                      <input className="input" value={round2(hours)} readOnly />
+                      <label className="label">Hours</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={displayHours}
+                        onChange={(e) => setDisplayHours(e.target.value)}
+                        disabled={loading}
+                      />
+                      <div className="mutedSm">Auto-calculated. Edit for half-days or custom hours.</div>
                     </div>
                   </div>
 
@@ -299,7 +349,7 @@ async function submit(e) {
                     <button
                       className="btn"
                       type="submit"
-                      disabled={loading || !employeeId || !startDate || !endDate || hours <= 0}
+                      disabled={loading || !employeeId || !startDate || !endDate || (Number(displayHours) || 0) <= 0}
                     >
                       {loading ? "Saving..." : "Save Leave"}
                     </button>
@@ -327,12 +377,12 @@ async function submit(e) {
           </div>
 
           <LeaveTable
-  leaves={leaves}
-  employeesById={employeesById}
-  onDelete={onDeleteLeave}
-  unitLabel="Total hours"
-  valueKey="hours"
-/>
+            leaves={leaves}
+            employeesById={employeesById}
+            onDelete={onDeleteLeave}
+            unitLabel="Total hours"
+            valueKey="hours"
+          />
         </>
       )}
     </div>

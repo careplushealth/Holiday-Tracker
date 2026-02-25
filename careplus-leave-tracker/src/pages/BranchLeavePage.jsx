@@ -59,6 +59,7 @@ export default function BranchLeavePage() {
   const [comment, setComment] = useState("");
   const [savedMsg, setSavedMsg] = useState("");
   const [loading, setLoading] = useState(false);
+  const [displayHours, setDisplayHours] = useState(0);
 
   // Load branches from DB (resolve UUID)
   useEffect(() => {
@@ -192,6 +193,12 @@ export default function BranchLeavePage() {
     return calculateHours(startDate, endDate, employee.weeklyHours, publicHolidaySet);
   }, [startDate, endDate, employee, publicHolidaySet]);
 
+  // Sync displayHours whenever auto-calc changes (e.g. when dates or employee changes)
+  // User can still type to override (e.g. for half-days)
+  useEffect(() => {
+    setDisplayHours(hours);
+  }, [hours]);
+
   const employeeLeaves = useMemo(
     () => leaves.filter((l) => l.employeeId === employeeId),
     [leaves, employeeId]
@@ -256,7 +263,8 @@ export default function BranchLeavePage() {
       return;
     }
 
-    if (hours <= 0) return;
+    const finalHours = Number(displayHours) || 0;
+    if (finalHours <= 0) return;
 
     setLoading(true);
     try {
@@ -266,7 +274,7 @@ export default function BranchLeavePage() {
         employeeId,
         startDate,
         endDate,
-        hours, // total hours (calculated)
+        hours: Number(displayHours) || 0,
         type,
         comment: comment.trim(),
       };
@@ -284,6 +292,7 @@ export default function BranchLeavePage() {
       setStartDate("");
       setEndDate("");
       setComment("");
+      setDisplayHours(0);
       setSavedMsg("Leave saved successfully.");
     } catch (err) {
       console.error(err);
@@ -339,9 +348,8 @@ export default function BranchLeavePage() {
                   Working pattern:{" "}
                   <b>
                     {employee
-                      ? `Mon ${employee.weeklyHours?.mon ?? 0}h, Tue ${employee.weeklyHours?.tue ?? 0}h, Wed ${
-                          employee.weeklyHours?.wed ?? 0
-                        }h, Thu ${employee.weeklyHours?.thu ?? 0}h, Fri ${employee.weeklyHours?.fri ?? 0}h`
+                      ? `Mon ${employee.weeklyHours?.mon ?? 0}h, Tue ${employee.weeklyHours?.tue ?? 0}h, Wed ${employee.weeklyHours?.wed ?? 0
+                      }h, Thu ${employee.weeklyHours?.thu ?? 0}h, Fri ${employee.weeklyHours?.fri ?? 0}h`
                       : "—"}
                   </b>
                 </div>
@@ -370,8 +378,16 @@ export default function BranchLeavePage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Hours (auto)</label>
-                  <input className="input" value={round2(hours)} readOnly />
+                  <label className="label">Hours</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={displayHours}
+                    onChange={(e) => setDisplayHours(e.target.value)}
+                  />
+                  <div className="mutedSm">Auto-calculated. Edit for half-days or custom hours.</div>
                 </div>
               </div>
 
@@ -392,7 +408,7 @@ export default function BranchLeavePage() {
                 <button
                   className="btn"
                   type="submit"
-                  disabled={loading || !employeeId || !startDate || !endDate || hours <= 0}
+                  disabled={loading || !employeeId || !startDate || !endDate || (Number(displayHours) || 0) <= 0}
                 >
                   {loading ? "Saving..." : "Save Leave"}
                 </button>
