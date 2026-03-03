@@ -3,6 +3,7 @@ import { useAuth } from "../context/Auth.jsx";
 import { getYearFromISO } from "../utils/dates.js";
 import { calculateHours } from "../utils/dates.js";
 import { calcPublicHolidayHoursForYear } from "../utils/holidayHours.js";
+import LeaveTable from "../components/LeaveTable.jsx";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -12,6 +13,11 @@ const TYPE_OPTIONS = [
   { label: "Sick Leave", value: "SICK" },
   { label: "Unpaid", value: "UNPAID" },
   { label: "Other", value: "OTHER" },
+];
+
+const FILTER_TYPE_OPTIONS = [
+  { label: "All Types", value: "" },
+  ...TYPE_OPTIONS,
 ];
 
 // Map old Store branch ids → DB branch names
@@ -60,6 +66,12 @@ export default function BranchLeavePage() {
   const [savedMsg, setSavedMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [displayHours, setDisplayHours] = useState(0);
+
+  // Filter state for leave records
+  const [filterEmployee, setFilterEmployee] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterFrom, setFilterFrom] = useState("");
+  const [filterTo, setFilterTo] = useState("");
 
   // Load branches from DB (resolve UUID)
   useEffect(() => {
@@ -235,6 +247,39 @@ export default function BranchLeavePage() {
     };
   }, [employee, employeeLeaves, year, publicHolidays]);
 
+  // Employees lookup for LeaveTable
+  const employeesById = useMemo(() => {
+    const map = {};
+    for (const e of employees) map[e.id] = e;
+    return map;
+  }, [employees]);
+
+  // Filtered leaves for the records section
+  const filteredLeaves = useMemo(() => {
+    return leaves.filter((l) => {
+      if (filterEmployee && l.employeeId !== filterEmployee) return false;
+      if (filterType && l.type !== filterType) return false;
+      if (filterFrom && l.startDate < filterFrom) return false;
+      if (filterTo && l.endDate > filterTo) return false;
+      return true;
+    });
+  }, [leaves, filterEmployee, filterType, filterFrom, filterTo]);
+
+  const filterStats = useMemo(() => {
+    const total = filteredLeaves.length;
+    const totalHours = filteredLeaves.reduce((s, l) => s + (Number(l.hours) || 0), 0);
+    return { total, totalHours: Math.round(totalHours * 100) / 100 };
+  }, [filteredLeaves]);
+
+  const hasFilters = filterEmployee || filterType || filterFrom || filterTo;
+
+  function clearFilters() {
+    setFilterEmployee("");
+    setFilterType("");
+    setFilterFrom("");
+    setFilterTo("");
+  }
+
   async function refreshLeaves() {
     if (!branchId) return;
     const from = `${year}-01-01`;
@@ -268,7 +313,6 @@ export default function BranchLeavePage() {
 
     setLoading(true);
     try {
-      // ✅ Store ONE record with start/end range
       const payload = {
         branchId,
         employeeId,
@@ -446,6 +490,99 @@ export default function BranchLeavePage() {
           )}
         </div>
       </div>
+
+      {/* Leave Records with Filters (no delete for branch users) */}
+      {branchId && (
+        <>
+          <div className="card" style={{ marginTop: 14, marginBottom: 14 }}>
+            <div className="cardHeader">
+              <h3 className="h3">Filters</h3>
+              {hasFilters && (
+                <button className="btn btnOutline" onClick={clearFilters}>
+                  Clear Filters
+                </button>
+              )}
+            </div>
+
+            <div className="toolbar">
+              <div className="tool">
+                <label className="label">Employee</label>
+                <select
+                  className="select"
+                  value={filterEmployee}
+                  onChange={(e) => setFilterEmployee(e.target.value)}
+                >
+                  <option value="">All Employees</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="tool">
+                <label className="label">From</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={filterFrom}
+                  onChange={(e) => setFilterFrom(e.target.value)}
+                />
+              </div>
+
+              <div className="tool">
+                <label className="label">To</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={filterTo}
+                  onChange={(e) => setFilterTo(e.target.value)}
+                />
+              </div>
+
+              <div className="tool">
+                <label className="label">Leave Type</label>
+                <select
+                  className="select"
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                >
+                  {FILTER_TYPE_OPTIONS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
+              <div>
+                <span className="mutedSm">Showing </span>
+                <span className="strong">{filterStats.total}</span>
+                <span className="mutedSm"> record{filterStats.total !== 1 ? "s" : ""}</span>
+              </div>
+              <div>
+                <span className="mutedSm">Total Hours: </span>
+                <span className="strong">{filterStats.totalHours}</span>
+              </div>
+              {hasFilters && (
+                <div className="mutedSm" style={{ marginLeft: "auto" }}>
+                  Filtered from {leaves.length} total records
+                </div>
+              )}
+            </div>
+          </div>
+
+          <LeaveTable
+            leaves={filteredLeaves}
+            employeesById={employeesById}
+          />
+        </>
+      )}
     </div>
   );
 }

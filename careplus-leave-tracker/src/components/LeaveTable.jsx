@@ -1,6 +1,16 @@
 import React from "react";
 
+function formatDate(dateStr) {
+  if (!dateStr) return "—";
+  // dateStr is "YYYY-MM-DD"
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return dateStr;
+  return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
 export default function LeaveTable({ leaves, employeesById, onDelete }) {
+  const showDelete = typeof onDelete === "function";
+
   return (
     <div className="card">
       <div className="cardHeader">
@@ -18,13 +28,13 @@ export default function LeaveTable({ leaves, employeesById, onDelete }) {
               <th>Type</th>
               <th>Total Hours</th>
               <th>Comment</th>
-              <th></th>
+              {showDelete && <th></th>}
             </tr>
           </thead>
           <tbody>
             {leaves.length === 0 ? (
               <tr>
-                <td colSpan={7} className="emptyCell">
+                <td colSpan={showDelete ? 7 : 6} className="emptyCell">
                   No leave records yet.
                 </td>
               </tr>
@@ -32,18 +42,20 @@ export default function LeaveTable({ leaves, employeesById, onDelete }) {
               leaves.map((l) => (
                 <tr key={l.id}>
                   <td className="strong">{employeesById[l.employeeId]?.name || "Unknown"}</td>
-                  <td>{l.startDate}</td>
-                  <td>{l.endDate}</td>
+                  <td>{formatDate(l.startDate)}</td>
+                  <td>{formatDate(l.endDate)}</td>
                   <td>
-                    <span className={`pill ${pillClass(l.type)}`}>{l.type}</span>
+                    <span className={`pill ${pillClass(l.type)}`}>{typeLabel(l.type)}</span>
                   </td>
-                 <td className="strong">{Number(l.hours) || 0}</td>
+                  <td className="strong">{Number(l.hours) || 0}</td>
                   <td className="muted">{l.comment || "—"}</td>
-                  <td className="tdRight">
-                    <button className="btn btnDanger" onClick={() => onDelete(l.id)}>
-                      Delete
-                    </button>
-                  </td>
+                  {showDelete && (
+                    <td className="tdRight">
+                      <button className="btn btnDanger" onClick={() => onDelete(l.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))
             )}
@@ -55,7 +67,16 @@ export default function LeaveTable({ leaves, employeesById, onDelete }) {
 }
 
 function pillClass(type) {
-  if (type === "Holiday") return "pillHoliday";
-  if (type === "Sick Leave") return "pillSick";
+  if (type === "ANNUAL") return "pillHoliday";
+  if (type === "SICK") return "pillSick";
   return "pillOther";
 }
+
+function typeLabel(type) {
+  if (type === "ANNUAL") return "Holiday";
+  if (type === "SICK") return "Sick Leave";
+  if (type === "UNPAID") return "Unpaid";
+  if (type === "OTHER") return "Other";
+  return type;
+}
+

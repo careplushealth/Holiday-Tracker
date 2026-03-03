@@ -44,7 +44,7 @@ export default function Layout() {
         <div className="brand">
           <div className="brandText">
             <div className="brandTitle">
-             Employee Leave Tracker
+              Employee Leave Tracker
 
             </div>
             <div className="brandSub">CareplusHealth - Internal Tool</div>
@@ -63,6 +63,15 @@ export default function Layout() {
               }
             >
               Leave Entry
+            </NavLink>
+
+            <NavLink
+              to="/leave-records"
+              className={({ isActive }) =>
+                isActive ? "navLink active" : "navLink"
+              }
+            >
+              Leave Records
             </NavLink>
 
             <NavLink

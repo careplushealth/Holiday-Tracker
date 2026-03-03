@@ -8,6 +8,7 @@ import LeaveEntryPage from "./pages/LeaveEntryPage.jsx";
 import EmployeesPage from "./pages/EmployeesPage.jsx";
 import CalendarPage from "./pages/CalendarPage.jsx";
 import PublicHolidaysPage from "./pages/PublicHolidaysPage.jsx";
+import LeaveRecordsPage from "./pages/LeaveRecordsPage.jsx";
 
 import LoginPage from "./pages/LoginPage.jsx";
 import BranchLeavePage from "./pages/BranchLeavePage.jsx";
@@ -55,6 +56,14 @@ export default function App() {
           element={
             <ProtectedRoute allow={["admin"]}>
               <PublicHolidaysPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/leave-records"
+          element={
+            <ProtectedRoute allow={["admin"]}>
+              <LeaveRecordsPage />
             </ProtectedRoute>
           }
         />

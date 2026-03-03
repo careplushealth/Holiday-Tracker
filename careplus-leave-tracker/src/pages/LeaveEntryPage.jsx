@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useStore } from "../context/Store.jsx";
 import { calculateHours, getYearFromISO } from "../utils/dates.js";
-import LeaveTable from "../components/LeaveTable.jsx";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -41,12 +40,6 @@ export default function LeaveEntryPage() {
     const dates = list.map((h) => (typeof h === "string" ? h : h?.date)).filter(Boolean);
     return new Set(dates);
   }, [state.publicHolidaysByYear, year]);
-
-  const employeesById = useMemo(() => {
-    const map = {};
-    for (const e of employees) map[e.id] = e;
-    return map;
-  }, [employees]);
 
   const selectedEmployee = useMemo(
     () => employees.find((e) => e.id === employeeId),
@@ -171,44 +164,6 @@ export default function LeaveEntryPage() {
     } catch (err) {
       console.error(err);
       setMsg("Error saving leave. Check server logs.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-
-  async function onDeleteLeave(leaveId) {
-    if (!leaveId) return;
-    if (!window.confirm("Are you sure you want to delete this leave record?")) return;
-
-    // Read auth token from localStorage (same key used by Auth.jsx)
-    let token = "";
-    try {
-      const raw = localStorage.getItem("careplus_auth_v1");
-      const session = raw ? JSON.parse(raw) : null;
-      token = session?.token || "";
-    } catch {
-      token = "";
-    }
-
-    setLoading(true);
-    setMsg("");
-    try {
-      const res = await fetch(`${API}/leaves?id=${encodeURIComponent(leaveId)}`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-
-      setMsg("Leave deleted.");
-      await refreshLeaves();
-    } catch (err) {
-      console.error(err);
-      setMsg("Error deleting leave. Check server logs.");
     } finally {
       setLoading(false);
     }
@@ -375,14 +330,6 @@ export default function LeaveEntryPage() {
               <div className="mutedSm">Counts are based on saved records in the selected branch (current year).</div>
             </div>
           </div>
-
-          <LeaveTable
-            leaves={leaves}
-            employeesById={employeesById}
-            onDelete={onDeleteLeave}
-            unitLabel="Total hours"
-            valueKey="hours"
-          />
         </>
       )}
     </div>

@@ -173,6 +173,13 @@ a{ color:inherit; text-decoration:none; }
 }
 .btn:disabled{ opacity:.55; cursor:not-allowed; }
 .btnDanger{ background:#b42318; }
+.btnOutline{
+  background:transparent;
+  color:var(--muted);
+  border:1px solid var(--border);
+  font-weight:650;
+}
+.btnOutline:hover{ background:#f1f2f7; }
 .hint{ margin-top:10px; color:var(--muted); font-size:12px; }
 
 .notice{
