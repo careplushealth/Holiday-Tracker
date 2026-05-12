@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useStore } from "../context/Store.jsx";
 import LeaveTable from "../components/LeaveTable.jsx";
-import { calculateHours, toISODate, parseISO } from "../utils/dates.js";
+import { calculateHours, toISODate, parseISO, eachDayInclusive, getScheduledHoursForISO } from "../utils/dates.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -168,12 +168,28 @@ export default function LeaveRecordsPage() {
         
         let workedHours = null;
         let expectedHours = null;
+        let allowedHours = null;
+        let bankHolidayHours = null;
 
-        if (filterEmployee && filterFrom && filterTo) {
+        if (filterEmployee) {
             const emp = employeesById[filterEmployee];
             if (emp) {
-                expectedHours = calculateHours(filterFrom, filterTo, emp.weeklyHours, publicHolidaySet);
-                workedHours = Math.max(0, expectedHours - totalLeaveHours);
+                allowedHours = emp.allowedHolidayHoursPerYear || 0;
+
+                if (filterFrom && filterTo) {
+                    expectedHours = calculateHours(filterFrom, filterTo, emp.weeklyHours, publicHolidaySet);
+                    workedHours = Math.max(0, expectedHours - totalLeaveHours);
+
+                    // Calculate bank holiday hours taken (that were scheduled)
+                    const daysInRange = eachDayInclusive(filterFrom, filterTo);
+                    let bhTotal = 0;
+                    for (const day of daysInRange) {
+                        if (publicHolidaySet.has(day)) {
+                            bhTotal += getScheduledHoursForISO(day, emp.weeklyHours);
+                        }
+                    }
+                    bankHolidayHours = bhTotal;
+                }
             }
         }
 
@@ -184,7 +200,9 @@ export default function LeaveRecordsPage() {
             sickHours: round2(sickHours),
             unpaidHours: round2(unpaidHours),
             workedHours: workedHours !== null ? round2(workedHours) : null,
-            expectedHours: expectedHours !== null ? round2(expectedHours) : null
+            expectedHours: expectedHours !== null ? round2(expectedHours) : null,
+            allowedHours: allowedHours !== null ? round2(allowedHours) : null,
+            bankHolidayHours: bankHolidayHours !== null ? round2(bankHolidayHours) : null
         };
     }, [filteredLeaves, filterEmployee, filterFrom, filterTo, employeesById, publicHolidaySet]);
 
@@ -328,6 +346,20 @@ export default function LeaveRecordsPage() {
                             <div className="statValue" style={{ color: 'var(--holiday)' }}>{stats.annualHours}h</div>
                             <div className="mutedSm">Annual Leave</div>
                         </div>
+                        {stats.allowedHours !== null && (
+                            <div className="statBox">
+                                <div className="statLabel">Total Allowed</div>
+                                <div className="statValue">{stats.allowedHours}h</div>
+                                <div className="mutedSm">Yearly allowance</div>
+                            </div>
+                        )}
+                        {stats.bankHolidayHours !== null && (
+                            <div className="statBox">
+                                <div className="statLabel">Bank Holidays</div>
+                                <div className="statValue" style={{ color: 'var(--nav)' }}>{stats.bankHolidayHours}h</div>
+                                <div className="mutedSm">Public holidays in range</div>
+                            </div>
+                        )}
                         <div className="statBox">
                             <div className="statLabel">Sick Leave</div>
                             <div className="statValue" style={{ color: 'var(--sick)' }}>{stats.sickHours}h</div>
