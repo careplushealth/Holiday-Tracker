@@ -17,7 +17,6 @@ export default function LeaveEntryPage() {
   const branchId = state.activeBranchId;
 
   const [employees, setEmployees] = useState([]);
-  const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -57,36 +56,24 @@ export default function LeaveEntryPage() {
     setDisplayHours(hours);
   }, [hours]);
 
-  // Load employees + leaves whenever branchId or year changes
+  // Load employees whenever branchId or year changes
   useEffect(() => {
     // IMPORTANT: still a hook, runs every render, but exits early safely
     if (!branchId) {
       setEmployees([]);
-      setLeaves([]);
       setEmployeeId("");
       return;
     }
-
-    const from = `${year}-01-01`;
-    const to = `${year}-12-31`;
 
     (async () => {
       setLoading(true);
       setMsg("");
       try {
-        const [eRes, lRes] = await Promise.all([
-          fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`),
-          fetch(`${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`),
-        ]);
-
+        const eRes = await fetch(`${API}/employees?branchId=${encodeURIComponent(branchId)}`);
         const eData = await eRes.json();
-        const lData = await lRes.json();
-
         const emps = Array.isArray(eData) ? eData : [];
-        const lvs = Array.isArray(lData) ? lData : [];
 
         setEmployees(emps);
-        setLeaves(lvs);
 
         // Ensure a valid selected employee
         if (emps.length > 0) {
@@ -97,27 +84,13 @@ export default function LeaveEntryPage() {
       } catch (err) {
         console.error(err);
         setEmployees([]);
-        setLeaves([]);
         setEmployeeId("");
-        setMsg("Failed to load employees/leaves. Check server.");
+        setMsg("Failed to load employees. Check server.");
       } finally {
         setLoading(false);
       }
     })();
   }, [branchId, year]);
-
-  async function refreshLeaves() {
-    if (!branchId) return;
-
-    const from = `${year}-01-01`;
-    const to = `${year}-12-31`;
-
-    const res = await fetch(
-      `${API}/leaves?branchId=${encodeURIComponent(branchId)}&from=${from}&to=${to}`
-    );
-    const data = await res.json();
-    setLeaves(Array.isArray(data) ? data : []);
-  }
 
   async function submit(e) {
     e.preventDefault();
@@ -160,7 +133,6 @@ export default function LeaveEntryPage() {
       setComment("");
       setDisplayHours(0);
       setMsg("Leave saved.");
-      await refreshLeaves();
     } catch (err) {
       console.error(err);
       setMsg("Error saving leave. Check server logs.");
@@ -169,19 +141,11 @@ export default function LeaveEntryPage() {
     }
   }
 
-  const quickStats = useMemo(() => {
-    const totalRecords = leaves.length;
-    const totalHours = sum(leaves.map((l) => Number(l.hours) || 0));
-    const holidayHours = sum(leaves.filter((l) => l.type === "ANNUAL").map((l) => Number(l.hours) || 0));
-    const sickHours = sum(leaves.filter((l) => l.type === "SICK").map((l) => Number(l.hours) || 0));
-    return { totalRecords, totalHours, holidayHours, sickHours };
-  }, [leaves]);
-
   // ✅ Render (NO early return before hooks)
   const needsBranch = !branchId;
 
   return (
-    <div className="page">
+    <div className="page" style={{ textAlign: "center" }}>
       <div className="pageHeader">
         <h1 className="h1">Leave Entry</h1>
         <p className="muted">
@@ -191,164 +155,134 @@ export default function LeaveEntryPage() {
       </div>
 
       {needsBranch ? (
-        <div className="card">
+        <div className="card" style={{ maxWidth: 600, margin: "0 auto" }}>
           <div className="notice">Select a branch first (top left) to start adding leave.</div>
         </div>
       ) : (
         <>
-          <div className="grid2">
-            <div className="card">
-              <div className="cardHeader">
-                <h3 className="h3">New Leave</h3>
-                <div className="muted">Branch-specific</div>
+          <div className="card" style={{ maxWidth: 1000, margin: "0 auto", textAlign: "left" }}>
+            <div className="cardHeader">
+              <h3 className="h3">New Leave</h3>
+              <div className="muted">Branch-specific</div>
+            </div>
+
+            {employees.length === 0 ? (
+              <div className="notice">
+                No employees in this branch yet. Go to <b>Employees</b> to add one.
               </div>
+            ) : (
+              <form className="form" onSubmit={submit}>
+                <div className="formRow">
+                  <label className="label">Employee</label>
+                  <select
+                    className="select"
+                    value={employeeId}
+                    onChange={(e) => setEmployeeId(e.target.value)}
+                    disabled={loading}
+                  >
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.name}
+                      </option>
+                    ))}
+                  </select>
 
-              {employees.length === 0 ? (
-                <div className="notice">
-                  No employees in this branch yet. Go to <b>Employees</b> to add one.
+                  <div className="mutedSm">
+                    Weekly hours used for calculation:{" "}
+                    <b>
+                      {selectedEmployee
+                        ? `${selectedEmployee.weeklyHours?.mon ?? 0}/${selectedEmployee.weeklyHours?.tue ?? 0}/${selectedEmployee.weeklyHours?.wed ?? 0}/${selectedEmployee.weeklyHours?.thu ?? 0}/${selectedEmployee.weeklyHours?.fri ?? 0} (Mon–Fri)`
+                        : "—"}
+                    </b>
+                  </div>
                 </div>
-              ) : (
-                <form className="form" onSubmit={submit}>
-                  <div className="formRow">
-                    <label className="label">Employee</label>
-                    <select
-                      className="select"
-                      value={employeeId}
-                      onChange={(e) => setEmployeeId(e.target.value)}
-                      disabled={loading}
-                    >
-                      {employees.map((emp) => (
-                        <option key={emp.id} value={emp.id}>
-                          {emp.name}
-                        </option>
-                      ))}
-                    </select>
 
-                    <div className="mutedSm">
-                      Weekly hours used for calculation:{" "}
-                      <b>
-                        {selectedEmployee
-                          ? `${selectedEmployee.weeklyHours?.mon ?? 0}/${selectedEmployee.weeklyHours?.tue ?? 0}/${selectedEmployee.weeklyHours?.wed ?? 0}/${selectedEmployee.weeklyHours?.thu ?? 0}/${selectedEmployee.weeklyHours?.fri ?? 0} (Mon–Fri)`
-                          : "—"}
-                      </b>
-                    </div>
-                  </div>
-
-                  <div className="formRow2">
-                    <div>
-                      <label className="label">Start Date</label>
-                      <input
-                        className="input"
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        disabled={loading}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">End Date</label>
-                      <input
-                        className="input"
-                        type="date"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        disabled={loading}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="formRow2">
-                    <div>
-                      <label className="label">Type of Leave</label>
-                      <select
-                        className="select"
-                        value={type}
-                        onChange={(e) => setType(e.target.value)}
-                        disabled={loading}
-                      >
-                        {TYPE_OPTIONS.map((t) => (
-                          <option key={t.value} value={t.value}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="label">Hours</label>
-                      <input
-                        className="input"
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        value={displayHours}
-                        onChange={(e) => setDisplayHours(e.target.value)}
-                        disabled={loading}
-                      />
-                      <div className="mutedSm">Auto-calculated. Edit for half-days or custom hours.</div>
-                    </div>
-                  </div>
-
-                  <div className="formRow">
-                    <label className="label">Comment (optional)</label>
-                    <textarea
-                      className="textarea"
-                      value={comment}
-                      onChange={(e) => setComment(e.target.value)}
-                      placeholder="e.g. Dentist appointment, flu, family emergency..."
-                      rows={3}
+                <div className="formRow2">
+                  <div>
+                    <label className="label">Start Date</label>
+                    <input
+                      className="input"
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
                       disabled={loading}
                     />
                   </div>
+                  <div>
+                    <label className="label">End Date</label>
+                    <input
+                      className="input"
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
 
-                  <div className="formActions">
-                    <button
-                      className="btn"
-                      type="submit"
-                      disabled={loading || !employeeId || !startDate || !endDate || (Number(displayHours) || 0) <= 0}
+                <div className="formRow2">
+                  <div>
+                    <label className="label">Type of Leave</label>
+                    <select
+                      className="select"
+                      value={type}
+                      onChange={(e) => setType(e.target.value)}
+                      disabled={loading}
                     >
-                      {loading ? "Saving..." : "Save Leave"}
-                    </button>
+                      {TYPE_OPTIONS.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-
-                  <div className="hint">
-                    Tip: Public holidays are managed on the <b>Public Holidays</b> page.
+                  <div>
+                    <label className="label">Hours</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={displayHours}
+                      onChange={(e) => setDisplayHours(e.target.value)}
+                      disabled={loading}
+                    />
+                    <div className="mutedSm">Auto-calculated. Edit for half-days or custom hours.</div>
                   </div>
+                </div>
 
-                  {msg && <div className="mutedSm" style={{ marginTop: 8 }}>{msg}</div>}
-                </form>
-              )}
-            </div>
+                <div className="formRow">
+                  <label className="label">Comment (optional)</label>
+                  <textarea
+                    className="textarea"
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    placeholder="e.g. Dentist appointment, flu, family emergency..."
+                    rows={3}
+                    disabled={loading}
+                  />
+                </div>
 
-            <div className="statsCard">
-              <h3 className="h3">Quick Stats (Branch)</h3>
-              <div className="statsGrid">
-                <Stat label="Total Records" value={quickStats.totalRecords} />
-                <Stat label="Total Hours (All Types)" value={round2(quickStats.totalHours)} />
-                <Stat label="Holiday Hours" value={round2(quickStats.holidayHours)} />
-                <Stat label="Sick Hours" value={round2(quickStats.sickHours)} />
-              </div>
-              <div className="mutedSm">Counts are based on saved records in the selected branch (current year).</div>
-            </div>
+                <div className="formActions">
+                  <button
+                    className="btn"
+                    type="submit"
+                    disabled={loading || !employeeId || !startDate || !endDate || (Number(displayHours) || 0) <= 0}
+                  >
+                    {loading ? "Saving..." : "Save Leave"}
+                  </button>
+                </div>
+
+                <div className="hint">
+                  Tip: Public holidays are managed on the <b>Public Holidays</b> page.
+                </div>
+
+                {msg && <div className="mutedSm" style={{ marginTop: 8 }}>{msg}</div>}
+              </form>
+            )}
           </div>
         </>
       )}
     </div>
   );
-}
-
-function Stat({ label, value }) {
-  return (
-    <div className="statBox">
-      <div className="statLabel">{label}</div>
-      <div className="statValue">{value}</div>
-    </div>
-  );
-}
-
-function sum(nums) {
-  return nums.reduce((a, b) => a + (Number(b) || 0), 0);
-}
-
-function round2(n) {
-  return Math.round((Number(n) || 0) * 100) / 100;
 }

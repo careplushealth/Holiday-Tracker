@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useStore } from "../context/Store.jsx";
 import LeaveTable from "../components/LeaveTable.jsx";
+import { calculateHours, toISODate, parseISO } from "../utils/dates.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -10,6 +11,14 @@ const TYPE_OPTIONS = [
     { label: "Sick Leave", value: "SICK" },
     { label: "Unpaid", value: "UNPAID" },
     { label: "Other", value: "OTHER" },
+];
+
+const PRESET_OPTIONS = [
+    { label: "Custom Range", value: "custom" },
+    { label: "Last 7 Days", value: "7" },
+    { label: "Last 30 Days", value: "30" },
+    { label: "Last 90 Days", value: "90" },
+    { label: "Last 365 Days", value: "365" },
 ];
 
 export default function LeaveRecordsPage() {
@@ -26,6 +35,7 @@ export default function LeaveRecordsPage() {
     const [filterType, setFilterType] = useState("");
     const [filterFrom, setFilterFrom] = useState("");
     const [filterTo, setFilterTo] = useState("");
+    const [filterPreset, setFilterPreset] = useState("custom");
 
     const year = new Date().getFullYear();
 
@@ -34,6 +44,13 @@ export default function LeaveRecordsPage() {
         for (const e of employees) map[e.id] = e;
         return map;
     }, [employees]);
+
+    // Public holidays for calc (if employee selected)
+    const publicHolidaySet = useMemo(() => {
+        const list = state.publicHolidaysByYear?.[year] || [];
+        const dates = list.map((h) => (typeof h === "string" ? h : h?.date)).filter(Boolean);
+        return new Set(dates);
+    }, [state.publicHolidaysByYear, year]);
 
     // Load employees + leaves
     useEffect(() => {
@@ -116,6 +133,20 @@ export default function LeaveRecordsPage() {
         }
     }
 
+    // Handle preset changes
+    const onPresetChange = (val) => {
+        setFilterPreset(val);
+        if (val === "custom") return;
+
+        const days = parseInt(val);
+        const to = new Date();
+        const from = new Date();
+        from.setDate(to.getDate() - (days - 1));
+
+        setFilterTo(toISODate(to));
+        setFilterFrom(toISODate(from));
+    };
+
     // Apply filters
     const filteredLeaves = useMemo(() => {
         return leaves.filter((l) => {
@@ -127,18 +158,46 @@ export default function LeaveRecordsPage() {
         });
     }, [leaves, filterEmployee, filterType, filterFrom, filterTo]);
 
-    // Quick stats on filtered results
+    // Advanced stats
     const stats = useMemo(() => {
         const total = filteredLeaves.length;
-        const totalHours = filteredLeaves.reduce((s, l) => s + (Number(l.hours) || 0), 0);
-        return { total, totalHours: Math.round(totalHours * 100) / 100 };
-    }, [filteredLeaves]);
+        const totalLeaveHours = filteredLeaves.reduce((s, l) => s + (Number(l.hours) || 0), 0);
+        const annualHours = filteredLeaves.filter(l => l.type === 'ANNUAL').reduce((s, l) => s + (Number(l.hours) || 0), 0);
+        const sickHours = filteredLeaves.filter(l => l.type === 'SICK').reduce((s, l) => s + (Number(l.hours) || 0), 0);
+        const unpaidHours = filteredLeaves.filter(l => l.type === 'UNPAID').reduce((s, l) => s + (Number(l.hours) || 0), 0);
+        
+        let workedHours = null;
+        let expectedHours = null;
+
+        if (filterEmployee && filterFrom && filterTo) {
+            const emp = employeesById[filterEmployee];
+            if (emp) {
+                expectedHours = calculateHours(filterFrom, filterTo, emp.weeklyHours, publicHolidaySet);
+                workedHours = Math.max(0, expectedHours - totalLeaveHours);
+            }
+        }
+
+        return { 
+            total, 
+            totalLeaveHours: round2(totalLeaveHours),
+            annualHours: round2(annualHours),
+            sickHours: round2(sickHours),
+            unpaidHours: round2(unpaidHours),
+            workedHours: workedHours !== null ? round2(workedHours) : null,
+            expectedHours: expectedHours !== null ? round2(expectedHours) : null
+        };
+    }, [filteredLeaves, filterEmployee, filterFrom, filterTo, employeesById, publicHolidaySet]);
 
     function clearFilters() {
         setFilterEmployee("");
         setFilterType("");
         setFilterFrom("");
         setFilterTo("");
+        setFilterPreset("custom");
+    }
+
+    function round2(n) {
+        return Math.round((Number(n) || 0) * 100) / 100;
     }
 
     const hasFilters = filterEmployee || filterType || filterFrom || filterTo;
@@ -171,7 +230,7 @@ export default function LeaveRecordsPage() {
                         </div>
 
                         <div className="toolbar">
-                            <div className="tool">
+                            <div className="tool toolGrow">
                                 <label className="label">Employee</label>
                                 <select
                                     className="select"
@@ -188,12 +247,30 @@ export default function LeaveRecordsPage() {
                             </div>
 
                             <div className="tool">
+                                <label className="label">Quick Filter</label>
+                                <select
+                                    className="select"
+                                    value={filterPreset}
+                                    onChange={(e) => onPresetChange(e.target.value)}
+                                >
+                                    {PRESET_OPTIONS.map((p) => (
+                                        <option key={p.value} value={p.value}>
+                                            {p.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="tool">
                                 <label className="label">From</label>
                                 <input
                                     className="input"
                                     type="date"
                                     value={filterFrom}
-                                    onChange={(e) => setFilterFrom(e.target.value)}
+                                    onChange={(e) => {
+                                        setFilterFrom(e.target.value);
+                                        setFilterPreset("custom");
+                                    }}
                                 />
                             </div>
 
@@ -203,7 +280,10 @@ export default function LeaveRecordsPage() {
                                     className="input"
                                     type="date"
                                     value={filterTo}
-                                    onChange={(e) => setFilterTo(e.target.value)}
+                                    onChange={(e) => {
+                                        setFilterTo(e.target.value);
+                                        setFilterPreset("custom");
+                                    }}
                                 />
                             </div>
 
@@ -225,23 +305,41 @@ export default function LeaveRecordsPage() {
                     </div>
 
                     {/* Stats summary */}
-                    <div className="card" style={{ marginBottom: 14 }}>
-                        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
-                            <div>
-                                <span className="mutedSm">Showing </span>
-                                <span className="strong">{stats.total}</span>
-                                <span className="mutedSm"> record{stats.total !== 1 ? "s" : ""}</span>
-                            </div>
-                            <div>
-                                <span className="mutedSm">Total Hours: </span>
-                                <span className="strong">{stats.totalHours}</span>
-                            </div>
-                            {hasFilters && (
-                                <div className="mutedSm" style={{ marginLeft: "auto" }}>
-                                    Filtered from {leaves.length} total records
-                                </div>
-                            )}
+                    <div className="statsGrid" style={{ marginBottom: 14 }}>
+                        <div className="statBox">
+                            <div className="statLabel">Total Records</div>
+                            <div className="statValue">{stats.total}</div>
+                            <div className="mutedSm">In selected range</div>
                         </div>
+                        {stats.workedHours !== null && (
+                            <div className="statBox statBoxPrimary">
+                                <div className="statLabel" style={{ color: 'var(--nav)' }}>Hours Worked</div>
+                                <div className="statValue" style={{ color: 'var(--nav)' }}>{stats.workedHours}h</div>
+                                <div className="mutedSm">Target: {stats.expectedHours}h</div>
+                            </div>
+                        )}
+                        <div className="statBox">
+                            <div className="statLabel">Leaves Taken</div>
+                            <div className="statValue">{stats.totalLeaveHours}h</div>
+                            <div className="mutedSm">Total off-time</div>
+                        </div>
+                        <div className="statBox">
+                            <div className="statLabel">Holidays</div>
+                            <div className="statValue" style={{ color: 'var(--holiday)' }}>{stats.annualHours}h</div>
+                            <div className="mutedSm">Annual Leave</div>
+                        </div>
+                        <div className="statBox">
+                            <div className="statLabel">Sick Leave</div>
+                            <div className="statValue" style={{ color: 'var(--sick)' }}>{stats.sickHours}h</div>
+                            <div className="mutedSm">Sick hours logged</div>
+                        </div>
+                        {stats.unpaidHours > 0 && (
+                            <div className="statBox">
+                                <div className="statLabel">Unpaid</div>
+                                <div className="statValue">{stats.unpaidHours}h</div>
+                                <div className="mutedSm">Unpaid leave</div>
+                            </div>
+                        )}
                     </div>
 
                     {msg && (
